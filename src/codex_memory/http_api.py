@@ -4,11 +4,20 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from .models import Layer
 from .service import MemoryService
+from .v1_schemas import (
+    AppendV1Request,
+    AppendV1Response,
+    ContextV1Request,
+    MemoryV1Request,
+    ReflectV1Request,
+    SearchV1Request,
+)
 
 
 LOGGER = logging.getLogger("codex_memory.http")
@@ -128,4 +137,90 @@ def create_app(db_path: str | Path = "memory.db") -> FastAPI:
         }
 
     app.state.memory_service = service
+    return app
+
+def create_v1_app(session_factory: Any) -> FastAPI:
+    from .auth import (
+        PermissionDenied,
+        ProjectAccessDenied,
+        TokenAuthenticationError,
+        authenticate_bearer,
+        require_permission,
+        require_project_access,
+    )
+    from .v1_schemas import (
+        AppendV1Request,
+        AppendV1Response,
+        ContextV1Request,
+        MemoryV1Request,
+        ReflectV1Request,
+        SearchV1Request,
+    )
+    from .v1_service import V1MemoryService
+
+    service = V1MemoryService(session_factory)
+    app = FastAPI(title="Codex Memory V1 API", version="1.0.0")
+    bearer = HTTPBearer(auto_error=False)
+
+    def current_principal(
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    ) -> Any:
+        if credentials is None or credentials.scheme.lower() != "bearer":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="bearer token required")
+        try:
+            return authenticate_bearer(session_factory, credentials.credentials)
+        except TokenAuthenticationError as error:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+
+    def enforce(principal: Any, project_key: str, permission: str) -> None:
+        try:
+            require_project_access(principal, project_key)
+            require_permission(principal, permission)
+        except (ProjectAccessDenied, PermissionDenied) as error:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+
+    @app.post("/api/v1/append", response_model=AppendV1Response)
+    def append_v1(payload: AppendV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
+        try:
+            result = service.append_message(
+                principal,
+                payload.project_key,
+                payload.session_key,
+                payload.event_key,
+                payload.role,
+                payload.content,
+                source=payload.source,
+                metadata=payload.metadata,
+            )
+        except (ProjectAccessDenied, PermissionDenied) as error:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+        return {"id": result.message_id, "status": result.status}
+
+    @app.post("/api/v1/memory")
+    def create_memory_v1(payload: MemoryV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
+        try:
+            memory = service.create_l1_memory(principal, payload.project_key, payload.type, payload.content, payload.title)
+        except (ProjectAccessDenied, PermissionDenied) as error:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+        return {"id": memory.id, "level": memory.level, "status": memory.status}
+
+    @app.post("/api/v1/context")
+    def context_v1(payload: ContextV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
+        enforce(principal, payload.project_key, "read")
+        return {"critical_rules": [], "long_term_rules": [], "recent_insights": [], "source_ids": []}
+
+    @app.post("/api/v1/search")
+    def search_v1(payload: SearchV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
+        enforce(principal, payload.project_key, "read")
+        return {"results": []}
+
+    @app.post("/api/v1/reflect")
+    def reflect_v1(payload: ReflectV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
+        enforce(principal, payload.project_key, "reflect")
+        return {"status": "accepted"}
+
+    @app.get("/api/v1/health")
+    def health_v1() -> dict[str, str]:
+        return {"status": "ok", "database": "configured", "vector": "configured"}
+
     return app
