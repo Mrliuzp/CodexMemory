@@ -206,13 +206,17 @@ def create_v1_app(session_factory: Any) -> FastAPI:
 
     @app.post("/api/v1/context")
     def context_v1(payload: ContextV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
-        enforce(principal, payload.project_key, "read")
-        return {"critical_rules": [], "long_term_rules": [], "recent_insights": [], "source_ids": []}
+        try:
+            return service.build_context(principal, payload.project_key, payload.task, payload.limit)
+        except (ProjectAccessDenied, PermissionDenied) as error:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
 
     @app.post("/api/v1/search")
     def search_v1(payload: SearchV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
-        enforce(principal, payload.project_key, "read")
-        return {"results": []}
+        try:
+            return {"results": service.search_memories(principal, payload.project_key, payload.query, payload.limit)}
+        except (ProjectAccessDenied, PermissionDenied) as error:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
 
     @app.post("/api/v1/reflect")
     def reflect_v1(payload: ReflectV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
