@@ -119,3 +119,30 @@ def create_server(db_path: str | Path = "memory.db") -> FastMCP:
 
 def run_server(db_path: str | Path = "memory.db", transport: str = "stdio") -> None:
     create_server(db_path).run(transport=transport)
+
+def create_v1_server(api_client: Any) -> FastMCP:
+    """Create the HTTP-backed MCP surface used by deployed Codex clients."""
+    server = FastMCP("Codex Memory V1 MCP")
+
+    @server.tool()
+    def build_context(project: str, task: str) -> dict[str, Any]:
+        return api_client.post("/api/v1/context", {"project_key": project, "task": task})
+
+    @server.tool()
+    def retrieve_memory(project: str, query: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {"project_key": project, "query": query}
+        payload.update(filters or {})
+        return api_client.post("/api/v1/search", payload)
+
+    @server.tool()
+    def record_outcome(project: str, type: str, content: dict[str, Any]) -> dict[str, Any]:
+        return api_client.post(
+            "/api/v1/memory",
+            {"project_key": project, "level": "L1", "type": type, "content": content},
+        )
+
+    @server.tool()
+    def health() -> dict[str, Any]:
+        return api_client.get("/api/v1/health")
+
+    return server
