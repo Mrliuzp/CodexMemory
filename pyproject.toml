@@ -1,0 +1,17 @@
+[project]
+name = "codex-memory-system"
+version = "0.1.0"
+description = "面向 Codex 智能体的项目级分层记忆与 RAG 上下文构建器。"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.139,<1", "uvicorn>=0.51,<1", "httpx2>=2.5,<3", "mcp>=1.28,<2"]
+
+[project.scripts]
+codex-memory = "codex_memory.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
