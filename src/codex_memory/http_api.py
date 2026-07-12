@@ -220,8 +220,10 @@ def create_v1_app(session_factory: Any) -> FastAPI:
 
     @app.post("/api/v1/reflect")
     def reflect_v1(payload: ReflectV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:
-        enforce(principal, payload.project_key, "reflect")
-        return {"status": "accepted"}
+        try:
+            return service.reflect_project(principal, payload.project_key)
+        except (ProjectAccessDenied, PermissionDenied) as error:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
 
     @app.get("/api/v1/health")
     def health_v1() -> dict[str, str]:

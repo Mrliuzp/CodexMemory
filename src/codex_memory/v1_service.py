@@ -10,7 +10,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import Principal, require_permission, require_project_access
-from .db_models import AuditLogRow, MemoryRow, MessageRow, ProjectRow, SessionRow
+from .classifier import MemoryClassifier
+from .models import Layer, RawLog
+from .db_models import AuditLogRow, MemoryRow, MemorySourceRow, MessageRow, ProjectRow, SessionRow
 
 
 @dataclass(frozen=True)
@@ -162,3 +164,59 @@ class V1MemoryService:
         rank = {"L3": 0, "L2": 1, "L1": 2}
         matches.sort(key=lambda item: (rank.get(item["level"], 3), item["id"]))
         return matches[:limit]
+    def reflect_project(self, principal: Principal, project_key: str) -> dict[str, int]:
+        require_permission(principal, "reflect")
+        require_project_access(principal, project_key)
+        report = {"processed_messages": 0, "l1_created": 0, "l2_created": 0, "l3_created": 0}
+        classifier = MemoryClassifier()
+
+        with self.session_factory() as session:
+            project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
+            if project is None:
+                raise LookupError(f"project does not exist: {project_key}")
+            processed_ids = set(session.scalars(select(MemorySourceRow.message_id).join(MemoryRow).where(MemoryRow.project_id == project.id)).all())
+            messages = session.scalars(select(MessageRow).where(MessageRow.project_id == project.id)).all()
+            for message in messages:
+                if message.id in processed_ids:
+                    continue
+                raw = RawLog(message.id, project_key, str(message.session_id), message.role, message.content, message.metadata_json, message.created_at.isoformat(), None)
+                for item in classifier.classify([raw]):
+                    level = Layer.L1.value if item.layer == Layer.L2 else item.layer.value
+                    memory = MemoryRow(
+                        project_id=project.id,
+                        level=level,
+                        memory_type=item.memory_type,
+                        title=item.title,
+                        content={"text": item.body, "tags": item.tags, "metadata": item.metadata or {}},
+                        status="active" if level == Layer.L3.value else "candidate",
+                        confidence=1.0 if level == Layer.L3.value else 0.5,
+                    )
+                    session.add(memory)
+                    session.flush()
+                    session.add(MemorySourceRow(memory_id=memory.id, message_id=message.id))
+                    report[f"{level.lower()}_created"] += 1
+                report["processed_messages"] += 1
+            session.flush()
+            groups: dict[str, dict[str, Any]] = {}
+            rows = session.execute(select(MemoryRow, SessionRow.session_key).join(MemorySourceRow).join(MessageRow).join(SessionRow).where(MemoryRow.project_id == project.id, MemoryRow.level == Layer.L1.value)).all()
+            for memory, session_key in rows:
+                text_key = str(memory.content.get("text", ""))
+                group = groups.setdefault(text_key, {"sessions": set(), "memories": []})
+                group["sessions"].add(session_key)
+                group["memories"].append(memory)
+            existing_l2 = {str(row.content.get("text", "")) for row in session.scalars(select(MemoryRow).where(MemoryRow.project_id == project.id, MemoryRow.level == Layer.L2.value)).all()}
+            for text_key, group in groups.items():
+                if len(group["sessions"]) < 2 or text_key in existing_l2:
+                    continue
+                source = group["memories"][0]
+                knowledge = MemoryRow(project_id=project.id, level=Layer.L2.value, memory_type="knowledge", title=(source.title or "Knowledge").replace("Working:", "Knowledge:", 1), content={**source.content, "validated_sessions": sorted(group["sessions"])}, status="active", confidence=0.9)
+                session.add(knowledge)
+                session.flush()
+                for memory in group["memories"]:
+                    source_ids = session.scalars(select(MemorySourceRow.message_id).where(MemorySourceRow.memory_id == memory.id)).all()
+                    for message_id in source_ids:
+                        session.add(MemorySourceRow(memory_id=knowledge.id, message_id=message_id))
+                report["l2_created"] += 1
+            session.add(AuditLogRow(project_id=project.id, event_type="reflection_completed", metadata_json=report.copy()))
+            session.commit()
+        return report
