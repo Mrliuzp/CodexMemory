@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
@@ -8,7 +10,8 @@ from codex_memory.db_models import Base
 
 
 config = context.config
-config.set_main_option("sqlalchemy.url", Settings.from_env().database_url)
+if os.environ.get("CODEX_MEMORY_DATABASE_URL"):
+    config.set_main_option("sqlalchemy.url", os.environ["CODEX_MEMORY_DATABASE_URL"])
 target_metadata = Base.metadata
 
 

@@ -61,6 +61,9 @@ class MessageRow(Base):
     source: Mapped[str] = mapped_column(String(50), nullable=False, default="hook")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ingestion_version: Mapped[str] = mapped_column(String(32), nullable=False, default="v1", server_default="v1")
+    conflict_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
 
 
 class MemoryRow(TimestampedRow, Base):
@@ -77,6 +80,9 @@ class MemoryRow(TimestampedRow, Base):
     usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="project", server_default="project")
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="rule", server_default="rule")
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="accepted", server_default="accepted")
 
 
 class MemoryEmbeddingRow(Base):
@@ -140,3 +146,22 @@ class AuditLogRow(Base):
     subject_id: Mapped[str | None] = mapped_column(String(100))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+from .v11_models import (
+    V11Base,
+    CandidateEvidenceRow,
+    CandidatePolicyResultRow,
+    EmbeddingProfileRow,
+    JobAttemptRow,
+    MemoryCandidateRow,
+    MemoryChunkRow,
+    MemoryEmbeddingVectorRow,
+    MemorySearchDocumentRow,
+    OutboxEventRow,
+    ProcessingJobRow,
+    ProjectFeatureFlagRow,
+    ProjectProcessingPolicyRow,
+    ProjectRetrievalProfileRow,
+    RetrievalAuditRow,
+    SecurityAuditRow,
+)
