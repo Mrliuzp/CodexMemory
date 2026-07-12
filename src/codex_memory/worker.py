@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -23,6 +24,23 @@ def run_once(session_factory: sessionmaker[Session]) -> dict[str, dict[str, int]
     return {project_key: service.reflect_project(principal, project_key) for project_key in project_keys}
 
 
+def seconds_until_schedule(schedule: str, now: datetime | None = None) -> float:
+    """Return the delay until the next local daily HH:MM execution window."""
+    try:
+        hour_text, minute_text = schedule.split(":", 1)
+        hour, minute = int(hour_text), int(minute_text)
+    except ValueError as error:
+        raise ValueError("schedule must use HH:MM format") from error
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError("schedule must use HH:MM format")
+
+    current = now or datetime.now()
+    target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= current:
+        target += timedelta(days=1)
+    return max(0.0, (target - current).total_seconds())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="codex-memory-worker")
     parser.add_argument("--schedule", default="02:00")
@@ -34,8 +52,8 @@ def main() -> None:
         print(run_once(factory))
         return
     while True:
+        time.sleep(seconds_until_schedule(args.schedule))
         run_once(factory)
-        time.sleep(60)
 
 
 if __name__ == "__main__":

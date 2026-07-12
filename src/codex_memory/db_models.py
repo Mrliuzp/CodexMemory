@@ -5,7 +5,6 @@ from typing import Any
 
 from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from pgvector.sqlalchemy import Vector
-from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -14,7 +13,6 @@ class Base(DeclarativeBase):
 
 
 IdType = BigInteger().with_variant(Integer, "sqlite")
-EmbeddingType = Vector(1536).with_variant(JSON, "sqlite")
 EmbeddingType = Vector(1536).with_variant(JSON, "sqlite")
 
 
@@ -97,6 +95,18 @@ class MemorySourceRow(Base):
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     memory_id: Mapped[int] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
     message_id: Mapped[int] = mapped_column(ForeignKey("messages.id", ondelete="RESTRICT"), nullable=False)
+
+
+class MemoryRelationRow(Base):
+    __tablename__ = "memory_relations"
+    __table_args__ = (
+        UniqueConstraint("from_memory", "to_memory", "relation", name="uq_memory_relations_edge"),
+    )
+
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    from_memory: Mapped[int] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
+    to_memory: Mapped[int] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
+    relation: Mapped[str] = mapped_column(String(50), nullable=False)
 
 
 class MemoryVersionRow(Base):

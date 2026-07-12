@@ -15,11 +15,20 @@ services:
 
   api:
     build: .
-    command: ["sh", "-c", "alembic upgrade head && uvicorn codex_memory.v1_app:app --host 0.0.0.0 --port 8000"]
+    command: ["sh", "-c", "alembic upgrade head && python -m codex_memory.bootstrap --project-key \"$${CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY}\" --project-name \"$${CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME}\" --token \"$${CODEX_MEMORY_SERVICE_TOKEN}\" && uvicorn codex_memory.v1_app:app --host 0.0.0.0 --port 8000"]
     environment:
       CODEX_MEMORY_DATABASE_URL: ${CODEX_MEMORY_DATABASE_URL}
+      CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY: ${CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY}
+      CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME: ${CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME}
+      CODEX_MEMORY_SERVICE_TOKEN: ${CODEX_MEMORY_SERVICE_TOKEN}
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,7 +42,8 @@ services:
     ports:
       - "8001:8001"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
   worker:
     build: .
@@ -41,7 +51,7 @@ services:
     environment:
       CODEX_MEMORY_DATABASE_URL: ${CODEX_MEMORY_DATABASE_URL}
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
 
 volumes:

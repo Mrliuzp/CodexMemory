@@ -13,6 +13,8 @@ def test_compose_declares_pgvector_and_service_ports() -> None:
     assert "api:" in compose
     assert "mcp:" in compose
     assert "worker:" in compose
+    assert "healthcheck:" in compose
+    assert compose.count("condition: service_healthy") >= 3
 
 
 def test_env_example_uses_placeholders_not_real_tokens() -> None:

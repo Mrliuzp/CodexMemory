@@ -84,3 +84,14 @@ def test_messages_allow_same_content_for_different_events() -> None:
 
     with session_factory() as session:
         assert session.query(MessageRow).count() == 2
+
+
+def test_schema_includes_memory_relations() -> None:
+    from sqlalchemy import inspect
+
+    from codex_memory.db import create_schema, create_sqlite_engine
+
+    engine = create_sqlite_engine()
+    create_schema(engine)
+
+    assert inspect(engine).has_table("memory_relations")

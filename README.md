@@ -244,6 +244,26 @@ context = runtime.prepare_answer_context(
 
 `prepare_answer_context` 会在检索前处理所请求项目的待处理 L0 分层任务。传入 `process_pending=False` 可以只查看已经分层的记忆。
 
+## V1 Docker 部署
+
+V1 部署需要 Docker Desktop、PostgreSQL 16 和 pgvector。首次启动会自动执行 Alembic 迁移，并按 `.env` 中的配置幂等创建首个项目和 API Token。
+
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env，修改 POSTGRES_PASSWORD、数据库 URL 中对应的密码和 SERVICE_TOKEN
+docker compose up -d --build
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+```
+
+服务地址：
+
+- API：`http://127.0.0.1:8000`
+- MCP Streamable HTTP：`http://127.0.0.1:8001/mcp`
+- 数据库数据：Docker 命名卷 `pgdata`
+
+`.env` 中的 `CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY` 是首个项目标识，`CODEX_MEMORY_SERVICE_TOKEN` 同时作为该项目的 API Token 和 MCP 服务 Token。生产环境请使用随机高强度值，并通过反向代理配置 HTTPS、访问控制和备份策略。
+
 要替换默认的本地嵌入逻辑，传入一个实现了 `embed(text)` 和 `similarity(left, right)` 的对象：
 
 ```python
