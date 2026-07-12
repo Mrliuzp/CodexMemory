@@ -120,9 +120,9 @@ def create_server(db_path: str | Path = "memory.db") -> FastMCP:
 def run_server(db_path: str | Path = "memory.db", transport: str = "stdio") -> None:
     create_server(db_path).run(transport=transport)
 
-def create_v1_server(api_client: Any) -> FastMCP:
+def create_v1_server(api_client: Any, host: str = "127.0.0.1", port: int = 8000) -> FastMCP:
     """Create the HTTP-backed MCP surface used by deployed Codex clients."""
-    server = FastMCP("Codex Memory V1 MCP")
+    server = FastMCP("Codex Memory V1 MCP", host=host, port=port, stateless_http=True)
 
     @server.tool()
     def build_context(project: str, task: str) -> dict[str, Any]:
