@@ -227,6 +227,17 @@ def create_v1_app(session_factory: Any) -> FastAPI:
 
     @app.get("/api/v1/health")
     def health_v1() -> dict[str, str]:
-        return {"status": "ok", "database": "configured", "vector": "configured"}
+        from sqlalchemy import text
+
+        try:
+            with session_factory() as session:
+                session.execute(text("SELECT 1"))
+                dialect = session.bind.dialect.name if session.bind is not None else "unknown"
+                vector = "not-applicable"
+                if dialect == "postgresql":
+                    vector = "ok" if session.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).first() else "error"
+                return {"status": "ok", "database": "ok", "vector": vector}
+        except Exception:
+            return {"status": "degraded", "database": "error", "vector": "unknown"}
 
     return app

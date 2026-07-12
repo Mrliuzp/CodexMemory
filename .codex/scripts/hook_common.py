@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,8 @@ def project_key(event: dict[str, Any], env: dict[str, str]) -> str:
     mapping = json.loads(env["CODEX_MEMORY_PROJECT_MAP"])
     cwd = _normalise_path(str(event["cwd"]))
     for root, key in mapping.items():
-        if cwd == _normalise_path(root) or cwd.startswith(_normalise_path(root) + "/"):
+        normalised = _normalise_path(root)
+        if cwd == normalised or cwd.startswith(normalised + "/"):
             return str(key)
     raise ValueError(f"no project mapping for cwd: {event['cwd']}")
 
@@ -41,26 +43,55 @@ def _outbox_path(env: dict[str, str]) -> Path:
     return Path(env.get("CODEX_MEMORY_OUTBOX_PATH", Path(tempfile.gettempdir()) / "codex-memory-outbox.jsonl"))
 
 
+@contextmanager
+def _outbox_lock(path: Path):
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0, 2)
+            if handle.tell() == 0:
+                handle.write(" ")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _append_outbox(record: dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with _outbox_lock(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def _replay_outbox(env: dict[str, str]) -> None:
     path = _outbox_path(env)
     if not path.exists():
         return
-    remaining: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        record = json.loads(line)
-        try:
-            post_json(record["path"], record["body"], env)
-        except OSError:
-            remaining.append(record)
-    replacement = path.with_suffix(".tmp")
-    replacement.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in remaining), encoding="utf-8")
-    replacement.replace(path)
+    with _outbox_lock(path):
+        remaining: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            record = json.loads(line)
+            try:
+                post_json(record["path"], record["body"], env)
+            except OSError:
+                remaining.append(record)
+        replacement = path.with_suffix(".tmp")
+        replacement.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in remaining), encoding="utf-8")
+        replacement.replace(path)
 
 
 def _send_or_queue(path: str, body: dict[str, Any], env: dict[str, str]) -> dict[str, Any] | None:
