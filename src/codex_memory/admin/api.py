@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import os
 import re
+import secrets
 from datetime import datetime
 from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from pydantic import BaseModel
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..auth import PermissionDenied, ProjectAccessDenied, Principal, TokenAuthenticationError, authenticate_bearer, require_permission, require_project_access
+from ..auth import PermissionDenied, ProjectAccessDenied, Principal, TokenAuthenticationError, authenticate_bearer, require_permission, require_project_access, issue_admin_session
 from ..db_models import AuditLogRow, MemoryRow, MessageRow, ProjectRow
 from ..v11_models import MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, RetrievalAuditRow
 
@@ -65,10 +68,28 @@ def _scope_allowed(session: Session, project: ProjectRow, scope_id: str | None) 
     row = session.execute(text("SELECT id FROM knowledge_scopes WHERE project_id = :project_id AND (CAST(id AS TEXT) = :scope_id OR scope_key = :scope_id)"), {"project_id": project.id, "scope_id": scope_id}).first()
     return row is not None
 
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
 def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     router = APIRouter(prefix="/api/admin/v1", tags=["admin-v1"])
     bearer = HTTPBearer(auto_error=False)
 
+    @router.post("/login")
+    def login(payload: AdminLoginRequest, request: Request) -> dict[str, Any]:
+        expected_username = os.environ.get("CODEX_MEMORY_ADMIN_USERNAME", "admin")
+        expected_password = os.environ.get("CODEX_MEMORY_ADMIN_PASSWORD", "")
+        if not expected_password:
+            raise _error(request, "login_not_configured", "admin login is not configured", status.HTTP_503_SERVICE_UNAVAILABLE)
+        if not (secrets.compare_digest(payload.username, expected_username) and secrets.compare_digest(payload.password, expected_password)):
+            raise _error(request, "invalid_credentials", "invalid username or password", status.HTTP_401_UNAUTHORIZED)
+        project_key = os.environ.get("CODEX_MEMORY_ADMIN_PROJECT_KEY", os.environ.get("CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY", "*"))
+        try:
+            token = issue_admin_session(payload.username, project_key=project_key)
+        except RuntimeError as error:
+            raise _error(request, "login_not_configured", str(error), status.HTTP_503_SERVICE_UNAVAILABLE) from error
+        return {"access_token": token, "token_type": "bearer", "expires_in": 8 * 60 * 60, "request_id": _request_id(request)}
     def principal(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Principal:
         if credentials is None or credentials.scheme.lower() != "bearer":
             error = _error(request, "authentication_required", "bearer token required", status.HTTP_401_UNAUTHORIZED)

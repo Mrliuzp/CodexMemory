@@ -18,3 +18,4 @@ cd apps\admin-web
 npm run build
 ```
 - [x] Admin Web has a production Nginx container with SPA fallback and `/api` proxying.
+- [x] Admin Web provides a username/password login page with signed session tokens and logout.
