@@ -17,3 +17,4 @@ Verification commands:
 cd apps\admin-web
 npm run build
 ```
+- [x] Admin Web has a production Nginx container with SPA fallback and `/api` proxying.

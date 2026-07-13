@@ -33,6 +33,13 @@ services:
       postgres:
         condition: service_healthy
 
+  admin-web:
+    build: ./apps/admin-web
+    ports:
+      - "5174:80"
+    depends_on:
+      api:
+        condition: service_healthy
   mcp:
     build: .
     command: ["python", "-m", "codex_memory.v1_mcp"]
