@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Index, JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -49,7 +49,7 @@ class SessionRow(Base):
 
 class MessageRow(Base):
     __tablename__ = "messages"
-    __table_args__ = (UniqueConstraint("event_key", name="uq_messages_event_key"),)
+    __table_args__ = (Index("uq_messages_project_event_key", "project_id", "event_key", unique=True),)
 
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True)

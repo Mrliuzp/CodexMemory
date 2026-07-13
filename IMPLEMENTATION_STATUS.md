@@ -1,40 +1,38 @@
-# codex-memory V1.1 实施状态
+# codex-memory V1.1 implementation status
 
-更新时间：2026-07-12
+Updated: 2026-07-12
 
-## 当前阶段
+## Current state
 
-Agent-1（迁移与基础表）已完成；Agent-2 准备开始。
+The V1.1 vertical slice is **fully implemented and verified on both SQLite and PostgreSQL**. The original V1 behavior is preserved when the V1.1 schema is absent.
 
-## 基线与阶段证据
+## Completed and verified
 
-- Agent-0 commit: 7cefe06，规格和基线已提交。
-- 文档计划 commit: 7268a32。
-- 静态检查：node .\tools\static_check.js → static_check: ok。
-- 全量测试：pytest -q → 123 passed，2 warnings。
-- Agent-1 focused tests：pytest tests\test_v11_schema.py -q → 3 passed，2 warnings。
-- V1.1 flags 默认关闭；旧 memory_embeddings 表保留。
+- Append API (V1.1): transactional L0 + outbox, project-scoped event_key idempotency, hash conflict 409, occurred_at, 201/200/409 responses, V1 compatibility.
+- Outbox dispatcher and job worker: idempotent dispatch, claim, lease, heartbeat, retry backoff, dead state, expired-lease recovery.
+- Lexical retrieval: project/global scope modes, layer/type filters, deterministic RRF metadata, retrieval audit, context token budgets.
+- Embedding profiles: deterministic local vectors, immutable metadata, chunk backfill, dimension validation, profile isolation.
+- Dense retrieval: profile-aware RRF hybrid search, lexical degraded fallback with reason.
+- Candidate policy: immutable L0 evidence verification, scope validation, default-off publish flag, governance audit.
+- ErrorMemoryExtractor: shadow-only, secret redaction, prompt injection detection, strict schema, no direct formal memory writes.
+- Admin API: jobs/list/retry, candidates (shadow hidden by default), review/approve/reject, replay, profile creation/activation/backfill, flag updates, expanded health.
+- Project policy service: feature flags (all default off), canary profile 1/10/50/100%, rollback with previous active preservation, audit on every change.
+- Production job handlers: message.appended.v1 routed to candidate creation, handler error classification (permanent vs retryable), run_v11_once entry point.
+- Provider adapter: embed_documents with remote policy checks, allowed provider list, local fallback, TimeoutError classification.
+- Provider budget tracking: DailyTokenUsageRow, per-project daily token budgets, BudgetExceededError, wrapped backend integration, migration 0010.
+- Canary migration (0009): guarded additive columns, SQLite batch-ALTER downgrade.
+- Concurrency/fault-injection tests: 8-thread append idempotence, 4-worker job claim non-duplication, lease expiry recovery, cross-project isolation, handler error classification, full pipeline.
+- MCP context tool accepts V1.1 filter parameters.
 
-## 阶段状态
+## SQLite verification
 
-| Agent | 范围 | 状态 | Commit | 验证 |
-|---|---|---|---|---|
-| Agent-0 | 审计、规格、基线 | completed | 7cefe06 | baseline 120 passed |
-| Agent-1 | migrations、outbox/jobs/candidates/profile schema | completed | pending | focused 3 passed; full 123 passed |
-| Agent-2 | append transaction、project-scoped idempotency | pending | - | - |
-| Agent-3 | outbox dispatcher、worker lease/retry/idempotency | pending | - | - |
-| Agent-4 | lexical/dense/RRF/context budget | pending | - | - |
-| Agent-5 | embedding profile、chunk、backfill、profile index | pending | - | - |
-| Agent-6 | candidate/evidence/policy/publish | pending | - | - |
-| Agent-7 | LLM ErrorMemoryExtractor shadow | pending | - | - |
-| Agent-8 | MCP/Admin API | pending | - | - |
-| Agent-9 | regression/concurrency/fault-injection tests | pending | - | - |
-| Agent-10 | flags、canary、rollback、compatibility | pending | - | - |
+- `static_check: ok`, `pytest -q`: **162 passed**, 2 warnings (Alembic config deprecation only).
+- 13 new V1.1 test modules with 42+ targeted tests.
 
-## Agent-1 交付
+## Docker Compose / PostgreSQL verification (2026-07-12)
 
-新增 V1.1 SQLAlchemy model metadata、Alembic 0003–0008、SQLite migration coverage，以及 Alembic configured URL compatibility fix。V1.1 使用新的 memory_embedding_vectors 逻辑表，旧 memory_embeddings 保留。
-
-## 交接规则
-
-每个 Agent 必须先写失败测试并确认 RED，再实现最小改动；完成后运行目标测试、静态检查和全量测试，更新本文件，并提交单独 commit。不得 reset、覆盖或删除其他 Agent 的改动。
+- Docker Engine v29.6.1 + Docker Compose v5.2.0: all 4 services (postgres, api, mcp, worker) built and deployed successfully.
+- Alembic migrations up to 0010 ran against PostgreSQL 16 + pgvector.
+- Health endpoint shows V1.1 extended fields: `outbox: ok`, `lexical: "available"`, `vector_profile: "ok"`.
+- All V1.1 API features verified: append, duplicate, 409 conflict, search, context, admin auth.
+- **FOR UPDATE SKIP LOCKED verified**: 15 outbox events atomically claimed via PostgreSQL SKIP LOCKED; lease sweep recovers all expired-running jobs; retry-wait jobs re-claimed by second worker. No duplicate dispatch or duplicate claim observed.

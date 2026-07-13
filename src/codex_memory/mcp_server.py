@@ -125,8 +125,10 @@ def create_v1_server(api_client: Any, host: str = "127.0.0.1", port: int = 8000)
     server = FastMCP("Codex Memory V1 MCP", host=host, port=port, stateless_http=True)
 
     @server.tool()
-    def build_context(project: str, task: str) -> dict[str, Any]:
-        return api_client.post("/api/v1/context", {"project_key": project, "task": task})
+    def build_context(project: str, task: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {"project_key": project, "task": task}
+        payload.update(filters or {})
+        return api_client.post("/api/v1/context", payload)
 
     @server.tool()
     def retrieve_memory(project: str, query: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
