@@ -21,9 +21,9 @@ def ensure_bootstrap(
     project_name: str | None = None,
 ) -> None:
     if not project_key.strip():
-        raise ValueError("bootstrap project key must not be empty")
+        raise ValueError("引导项目键不能为空")
     if not token.strip() or token == "change-me":
-        raise ValueError("bootstrap token must be configured with a non-placeholder value")
+        raise ValueError("必须配置非占位符的引导令牌（placeholder）")
 
     token_hash = hash_token(token)
     with session_factory() as session:
@@ -36,7 +36,7 @@ def ensure_bootstrap(
         existing = session.scalar(select(ApiKeyRow).where(ApiKeyRow.token_hash == token_hash))
         if existing is not None:
             if existing.project_id != project.id:
-                raise ValueError("bootstrap token is already bound to another project")
+                raise ValueError("引导令牌已绑定到其他项目")
             return
 
         session.add(

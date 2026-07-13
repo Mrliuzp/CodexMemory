@@ -39,9 +39,9 @@ def seconds_until_schedule(schedule: str, now: datetime | None = None) -> float:
         hour_text, minute_text = schedule.split(":", 1)
         hour, minute = int(hour_text), int(minute_text)
     except ValueError as error:
-        raise ValueError("schedule must use HH:MM format") from error
+        raise ValueError("调度时间必须使用 HH:MM 格式") from error
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise ValueError("schedule must use HH:MM format")
+        raise ValueError("调度时间必须使用 HH:MM 格式")
 
     current = now or datetime.now()
     target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)

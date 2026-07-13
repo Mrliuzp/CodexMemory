@@ -41,7 +41,7 @@ class V11Retriever:
         include_audit: bool = False,
     ) -> dict[str, Any]:
         if scope_mode not in _VALID_SCOPE_MODES:
-            raise ValueError(f"unsupported scope_mode: {scope_mode}")
+            raise ValueError(f"不支持的作用域模式：{scope_mode}")
         limit = max(1, min(limit, 50))
         query_tokens = self._tokens(query)
         with self.session_factory() as session:

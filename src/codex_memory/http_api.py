@@ -284,7 +284,7 @@ def create_v1_app(session_factory: Any) -> FastAPI:
         with session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
         if project is None:
-            raise HTTPException(status_code=404, detail="project not found")
+            raise HTTPException(status_code=404, detail="项目不存在")
         try:
             flags = ProjectPolicyService(session_factory).update_flags(project.id, **payload)
         except ValueError as error:
@@ -325,7 +325,7 @@ def create_v1_app(session_factory: Any) -> FastAPI:
         with session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
         if project is None:
-            raise HTTPException(status_code=404, detail="project not found")
+            raise HTTPException(status_code=404, detail="项目不存在")
         try:
             setting = ProjectPolicyService(session_factory).set_active_profile(project.id, int(payload["profile_id"]))
         except (KeyError, ValueError) as error:
@@ -358,7 +358,7 @@ def create_v1_app(session_factory: Any) -> FastAPI:
         with session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
             if project is None:
-                raise HTTPException(status_code=404, detail="project not found")
+                raise HTTPException(status_code=404, detail="项目不存在")
             query = select(ProcessingJobRow).where(ProcessingJobRow.project_id == project.id)
             if job_status:
                 query = query.where(ProcessingJobRow.status == job_status)
@@ -393,16 +393,16 @@ def create_v1_app(session_factory: Any) -> FastAPI:
         with session_factory() as session:
             job = session.get(ProcessingJobRow, job_id)
             if job is None:
-                raise HTTPException(status_code=404, detail="job not found")
+                raise HTTPException(status_code=404, detail="任务不存在")
             project = session.get(ProjectRow, job.project_id)
             if project is None:
-                raise HTTPException(status_code=404, detail="project not found")
+                raise HTTPException(status_code=404, detail="项目不存在")
             try:
                 require_project_access(principal, project.project_key)
             except ProjectAccessDenied as error:
                 raise HTTPException(status_code=403, detail=str(error)) from error
             if job.status not in {"dead", "retry_wait"}:
-                raise HTTPException(status_code=409, detail="job is not retryable")
+                raise HTTPException(status_code=409, detail="任务不可重试")
             job.status = "pending"
             job.next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None)
             job.last_error_code = None
@@ -439,7 +439,7 @@ def create_v1_app(session_factory: Any) -> FastAPI:
         with session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
             if project is None:
-                raise HTTPException(status_code=404, detail="project not found")
+                raise HTTPException(status_code=404, detail="项目不存在")
             query = select(MemoryCandidateRow).where(MemoryCandidateRow.project_id == project.id)
             if candidate_status:
                 query = query.where(MemoryCandidateRow.status == candidate_status)
@@ -470,14 +470,14 @@ def create_v1_app(session_factory: Any) -> FastAPI:
 
         decision = payload.get("decision", "")
         if decision not in {"approve", "reject"}:
-            raise HTTPException(status_code=422, detail="decision must be approve or reject")
+            raise HTTPException(status_code=422, detail="decision 必须是 approve 或 reject")
         with session_factory() as session:
             candidate = session.get(MemoryCandidateRow, candidate_id)
             if candidate is None:
-                raise HTTPException(status_code=404, detail="candidate not found")
+                raise HTTPException(status_code=404, detail="候选记忆不存在")
             project = session.get(ProjectRow, candidate.project_id)
             if project is None:
-                raise HTTPException(status_code=404, detail="project not found")
+                raise HTTPException(status_code=404, detail="项目不存在")
             try:
                 require_project_access(principal, project.project_key)
             except ProjectAccessDenied as error:
@@ -508,7 +508,7 @@ def create_v1_app(session_factory: Any) -> FastAPI:
         with session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
             if project is None:
-                raise HTTPException(status_code=404, detail="project not found")
+                raise HTTPException(status_code=404, detail="项目不存在")
             messages = session.scalars(
                 select(MessageRow).where(MessageRow.project_id == project.id).order_by(MessageRow.id)
             ).all()

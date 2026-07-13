@@ -39,7 +39,7 @@ class ProjectPolicyService:
     def update_flags(self, project_id: int, **changes: bool) -> ProjectFeatureFlagRow:
         unknown = set(changes) - _FLAG_NAMES
         if unknown:
-            raise ValueError(f"unknown flag: {sorted(unknown)[0]}")
+            raise ValueError(f"未知功能开关（unknown flag）：{sorted(unknown)[0]}")
         with self.session_factory() as session:
             flags = session.get(ProjectFeatureFlagRow, project_id)
             if flags is None:
@@ -68,11 +68,11 @@ class ProjectPolicyService:
         percent: int,
     ) -> ProjectRetrievalProfileRow:
         if percent not in {1, 10, 50, 100}:
-            raise ValueError("canary percent must be one of 1, 10, 50, 100")
+            raise ValueError("Canary 百分比必须是 1、10、50 或 100")
         with self.session_factory() as session:
             profile = session.get(EmbeddingProfileRow, profile_id)
             if profile is None or profile.status == "retired":
-                raise ValueError("profile is not available")
+                raise ValueError("Profile（profile）不可用")
             setting = session.get(ProjectRetrievalProfileRow, project_id)
             if setting is None:
                 setting = ProjectRetrievalProfileRow(project_id=project_id)
@@ -99,7 +99,7 @@ class ProjectPolicyService:
         with self.session_factory() as session:
             setting = session.get(ProjectRetrievalProfileRow, project_id)
             if setting is None or setting.previous_active_embedding_profile_id is None:
-                raise ValueError("no previous profile available for rollback")
+                raise ValueError("没有可用于回滚的上一个 Profile")
             setting.active_embedding_profile_id = setting.previous_active_embedding_profile_id
             setting.canary_embedding_profile_id = None
             setting.canary_percent = 0
@@ -120,7 +120,7 @@ class ProjectPolicyService:
         with self.session_factory() as session:
             profile = session.get(EmbeddingProfileRow, profile_id)
             if profile is None or profile.status == "retired":
-                raise ValueError("profile is not available")
+                raise ValueError("Profile（profile）不可用")
             setting = session.get(ProjectRetrievalProfileRow, project_id)
             if setting is None:
                 setting = ProjectRetrievalProfileRow(project_id=project_id)

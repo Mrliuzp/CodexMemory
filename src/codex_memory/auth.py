@@ -76,16 +76,16 @@ def authenticate_bearer(session_factory: sessionmaker[Session], token: str) -> P
             .where(ApiKeyRow.token_hash == token_hash, ApiKeyRow.status == "active")
         ).first()
         if row is None:
-            raise TokenAuthenticationError("invalid bearer token")
+            raise TokenAuthenticationError("Bearer 令牌无效")
         api_key, project = row
         return Principal(project_key=project.project_key, permissions=frozenset(api_key.permissions))
 
 
 def require_project_access(principal: Principal, project_key: str) -> None:
     if "admin" not in principal.permissions and principal.project_key != project_key:
-        raise ProjectAccessDenied(f"token cannot access project: {project_key}")
+        raise ProjectAccessDenied(f"令牌无权访问项目：{project_key}")
 
 
 def require_permission(principal: Principal, permission: str) -> None:
     if permission not in principal.permissions and "admin" not in principal.permissions:
-        raise PermissionDenied(f"missing permission: {permission}")
+        raise PermissionDenied(f"缺少权限：{permission}")

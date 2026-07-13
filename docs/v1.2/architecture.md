@@ -1,20 +1,20 @@
-# Codex Memory V1.2 Architecture
+# Codex Memory V1.2 架构
 
-## P0 runtime shape
+## P0 运行形态
 
 ```mermaid
 flowchart LR
-  Browser[Admin Web] -->|Bearer + JSON| API[FastAPI /api/admin/v1]
-  API --> Auth[Project and Scope authorization]
-  API --> Query[Read-only Query Service]
-  Query --> DB[(Existing V1.1 tables)]
+  Browser[管理后台] -->|Bearer + JSON| API[FastAPI /api/admin/v1]
+  API --> Auth[项目与作用域授权]
+  API --> Query[只读查询服务]
+  Query --> DB[(现有 V1.1 数据表)]
   Query --> Scope[(knowledge_scopes)]
 ```
 
-P0 is an observation surface. It shares the existing SQLAlchemy session boundary with V1.1, but its route namespace and query mappers are isolated under `codex_memory.admin`. Existing `/api/v1/*` endpoints remain unchanged and no P0 route performs a business write.
+P0 是观测界面。它与 V1.1 共用现有 SQLAlchemy 会话边界，但路由命名空间和查询映射器隔离在 `codex_memory.admin` 下。现有 `/api/v1/*` 接口保持不变，P0 路由不执行业务写入。
 
-The frontend lives in `apps/admin-web`, uses Vue 3, Vite, Element Plus, Pinia, and Vue Router, and keeps filter state in the URL. Vite proxies `/api` to the FastAPI process during local development.
+前端位于 `apps/admin-web`，使用 Vue 3、Vite、Element Plus、Pinia 和 Vue Router，并将筛选状态保存在 URL 中。本地开发时，Vite 将 `/api` 代理到 FastAPI 进程。
 
-## Request contract
+## 请求契约
 
-Successful list responses use `data`, `meta`, and `request_id`. `meta` contains `page`, `page_size`, `total`, and `has_next`. Errors use a top-level `error` object with `code`, `message`, and `request_id`; every response includes `X-Request-ID`.
+成功的列表响应使用 `data`、`meta` 和 `request_id`。`meta` 包含 `page`、`page_size`、`total` 和 `has_next`。错误响应使用顶层 `error` 对象，其中包含 `code`、`message` 和 `request_id`；每个响应都包含 `X-Request-ID`。

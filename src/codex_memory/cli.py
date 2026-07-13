@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -91,7 +91,7 @@ def main() -> None:
     rebuild = subparsers.add_parser("rebuild", help="Rebuild project derived memories from L0.")
     rebuild.add_argument("--project", required=True)
 
-    retry_failed = subparsers.add_parser("retry-failed", help="Retry failed L0 processing jobs.")
+    retry_failed = subparsers.add_parser("retry-failed", help="重试失败的 L0 处理任务。")
     retry_failed.add_argument("--project", required=True)
 
     reset_stale = subparsers.add_parser("reset-stale-running", help="Reset stale running L0 jobs.")
@@ -285,9 +285,9 @@ def parse_json_object(value: str) -> dict:
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as error:
-        raise argparse.ArgumentTypeError(f"invalid JSON object: {error.msg}") from error
+        raise argparse.ArgumentTypeError(f"JSON 对象无效：{error.msg}") from error
     if not isinstance(parsed, dict):
-        raise argparse.ArgumentTypeError("metadata JSON must be an object")
+        raise argparse.ArgumentTypeError("metadata JSON 必须是对象（must be an object）")
     return parsed
 
 

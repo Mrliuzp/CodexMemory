@@ -8,7 +8,7 @@ async function request(path, options = {}, params = {}) {
   const response = await fetch(url, { ...options, headers: { ...headers, ...(options.headers || {}) } })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    const error = new Error(payload.error?.message || `Request failed (${response.status})`)
+    const error = new Error(payload.error?.message || `请求失败（${response.status}）`)
     error.status = response.status
     error.code = payload.error?.code
     throw error

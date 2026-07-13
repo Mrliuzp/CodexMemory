@@ -32,7 +32,7 @@ class EmbeddingProfileService:
         normalization: str = "l2",
     ) -> EmbeddingProfileRow:
         if dimension < 1:
-            raise ValueError("dimension must be positive")
+            raise ValueError("维度必须为正数")
         with self.session_factory() as session:
             profile = EmbeddingProfileRow(
                 name=name,

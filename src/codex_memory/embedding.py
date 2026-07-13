@@ -142,4 +142,4 @@ def _vector_parts(left: Vector, right: Vector) -> tuple[float, float, float]:
         right_norm = math.sqrt(sum(float(value) * float(value) for value in right))
         return dot, left_norm, right_norm
 
-    raise TypeError("embedding vectors must both be mappings or both be sequences")
+    raise TypeError("Embedding 向量必须同时为映射或同时为序列")

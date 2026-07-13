@@ -1,4 +1,4 @@
-﻿var UI = {};
+var UI = {};
 
 UI.showLoading = function() {
   document.getElementById('loading').style.display = 'flex';
@@ -31,6 +31,7 @@ UI.badge = function(text, type) {
 };
 
 UI.badgeForStatus = function(status) {
+  var labels = { pending: '待处理', running: '运行中', completed: '已完成', failed: '失败', dead: '终止', retry_wait: '等待重试', generated: '已生成', approved: '已批准', rejected: '已拒绝', shadow: '影子（Shadow）', active: '活跃', inactive: '未启用', draft: '草稿', published: '已发布' };
   var map = {
     'pending': 'warning',
     'running': 'info',
@@ -47,7 +48,7 @@ UI.badgeForStatus = function(status) {
     'draft': 'warning',
     'published': 'success',
   };
-  return UI.badge(status, map[status] || 'dark');
+  return UI.badge(labels[status] || status, map[status] || 'dark');
 };
 
 UI.timeAgo = function(iso) {

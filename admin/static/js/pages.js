@@ -1,6 +1,6 @@
-﻿var Pages = {};
+var Pages = {};
 
-// ===== Dashboard =====
+// ===== 仪表盘 =====
 Pages.dashboard = function(state) {
   UI.showLoading();
   Promise.all([API.health(), API.stats()]).then(function(results) {
@@ -13,7 +13,7 @@ Pages.dashboard = function(state) {
     var dbStatus = health.status;
     var dbEl = document.getElementById('db-status');
     dbEl.className = 'status-dot ' + dbStatus;
-    dbEl.title = 'Database: ' + dbStatus;
+    dbEl.title = '数据库：' + dbStatus;
 
     var section = document.createElement('div');
     section.className = 'page-section';
@@ -65,7 +65,7 @@ Pages.dashboard = function(state) {
   });
 };
 
-// ===== Projects =====
+// ===== 项目 =====
 Pages.projects = function(state) {
   UI.showLoading();
   var selectedId = state.selectedProjectId;
@@ -127,7 +127,7 @@ Pages.projects = function(state) {
   });
 };
 
-// ===== Jobs =====
+// ===== 任务 =====
 Pages.jobs = function(state) {
   UI.showLoading();
   var params = {};
@@ -179,7 +179,7 @@ Pages.retryJob = function(jobId) {
   });
 };
 
-// ===== Candidates =====
+// ===== 候选记忆 =====
 Pages.candidates = function(state) {
   UI.showLoading();
   var params = {};
@@ -245,7 +245,7 @@ Pages.rejectCandidate = function(candidateId) {
   });
 };
 
-// ===== Feature Flags =====
+// ===== 功能开关 =====
 Pages.flags = function(state) {
   UI.showLoading();
   var pid = state.flagsProjectId;
@@ -335,7 +335,7 @@ Pages.toggleFlag = function(projectId, flagName, checked) {
   });
 };
 
-// ===== Profiles =====
+// ===== 嵌入配置 =====
 Pages.profiles = function() {
   UI.showLoading();
   API.profiles().then(function(data) {
@@ -387,7 +387,7 @@ Pages.showCreateProfile = function() {
   });
 };
 
-// ===== Memories =====
+// ===== 记忆 =====
 Pages.memories = function(state) {
   UI.showLoading();
   var params = { limit: 100 };
@@ -416,7 +416,7 @@ Pages.memories = function(state) {
     section.innerHTML += '<p style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">共 ' + (data.total || 0) + ' 条记忆</p>';
     section.innerHTML += '<div class="table-wrapper"><table><thead><tr><th>ID</th><th>标题</th><th>层级</th><th>类型</th><th>范围</th><th>项目</th><th>状态</th><th>置信度</th><th>使用次数</th><th>更新于</th></tr></thead><tbody>';
     (data.memories || []).forEach(function(m) {
-      section.innerHTML += '<tr><td>' + m.id + '</td><td><strong>' + escapeHtml((m.title || '').substring(0, 60)) + '</strong></td><td>' + UI.badgeForStatus(m.level) + '</td><td><small>' + escapeHtml(m.memory_type || '') + '</small></td><td>' + (m.scope === 'global' ? UI.badge('global', 'purple') : 'project') + '</td><td>' + (m.project_id || '-') + '</td><td>' + UI.badgeForStatus(m.status) + '</td><td>' + (m.confidence ? (m.confidence * 100).toFixed(0) + '%' : '-') + '</td><td>' + m.usage_count + '</td><td><small>' + UI.timeAgo(m.updated_at) + '</small></td></tr>';
+      section.innerHTML += '<tr><td>' + m.id + '</td><td><strong>' + escapeHtml((m.title || '').substring(0, 60)) + '</strong></td><td>' + UI.badgeForStatus(m.level) + '</td><td><small>' + escapeHtml(m.memory_type || '') + '</small></td><td>' + (m.scope === 'global' ? UI.badge('全局', 'purple') : '项目') + '</td><td>' + (m.project_id || '-') + '</td><td>' + UI.badgeForStatus(m.status) + '</td><td>' + (m.confidence ? (m.confidence * 100).toFixed(0) + '%' : '-') + '</td><td>' + m.usage_count + '</td><td><small>' + UI.timeAgo(m.updated_at) + '</small></td></tr>';
       if (m.content && Object.keys(m.content).length) {
         section.innerHTML += '<tr style="background:var(--accent-light)"><td colspan="10"><details><summary>查看详细内容</summary><pre class="json-pre">' + escapeHtml(JSON.stringify(m.content, null, 2)) + '</pre></details></td></tr>';
       }
@@ -436,7 +436,7 @@ Pages.memories = function(state) {
   });
 };
 
-// ===== L0 Raw Logs =====
+// ===== L0 原始日志 =====
 Pages.logs = function(state) {
   UI.showLoading();
   var params = { limit: 100 };
@@ -478,7 +478,7 @@ Pages.logs = function(state) {
   });
 };
 
-// ===== Token Usage =====
+// ===== 令牌用量 =====
 Pages.tokenUsage = function(state) {
   UI.showLoading();
   API.tokenUsage().then(function(data) {
@@ -518,7 +518,7 @@ Pages.tokenUsage = function(state) {
   });
 };
 
-// ===== Audit Logs =====
+// ===== 审计日志 =====
 Pages.auditLogs = function(state) {
   UI.showLoading();
   var params = {};

@@ -36,9 +36,9 @@ class CandidatePolicyService:
         evidence: list[tuple[int, int, int]],
     ) -> MemoryCandidateRow:
         if scope not in {"project", "global"}:
-            raise ValueError("scope must be project or global")
+            raise ValueError("scope 必须是 project 或 global")
         if level not in {"L1", "L2", "L3"}:
-            raise ValueError("level must be L1, L2 or L3")
+            raise ValueError("level 必须是 L1、L2 或 L3")
         with self.session_factory() as session:
             project = session.get(ProjectRow, project_id)
             source = session.get(MessageRow, source_message_id)
@@ -63,7 +63,7 @@ class CandidatePolicyService:
                 if message is None or message.project_id != project_id:
                     raise ValueError("evidence message does not belong to project")
                 if start_char < 0 or end_char <= start_char or end_char > len(message.content):
-                    raise ValueError("evidence offsets are invalid")
+                    raise ValueError("证据偏移量无效")
                 quoted = message.content[start_char:end_char]
                 session.add(
                     CandidateEvidenceRow(

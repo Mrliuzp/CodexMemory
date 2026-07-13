@@ -110,7 +110,7 @@ SQL：
     CREATE INDEX ix_outbox_claim
         ON outbox_events(status, next_attempt_at, priority DESC, created_at, id);
 
-### 2.3 Processing Jobs 与尝试记录
+### 2.3 处理任务（Processing Jobs）与尝试记录
 
 SQL：
 
@@ -162,7 +162,7 @@ SQL：
     CREATE INDEX ix_jobs_project_status
         ON processing_jobs(project_id, status, created_at);
 
-### 2.4 Scope、Candidate、Evidence 与 Policy
+### 2.4 Scope、候选记忆、证据与策略
 
 项目记忆必须 scope=project 且 project_id 非空；全局记忆必须 scope=global、project_id 为空且 level=L2。
 
@@ -231,7 +231,7 @@ SQL：
 
 项目 L2 提升为 global L2 时新建 memories 行，并在 memory_relations 写 derived_from；不修改原项目记忆。
 
-### 2.5 Chunk、Embedding Profile 与可变维度向量
+### 2.5 分块、Embedding Profile 与可变维度向量
 
 SQL：
 
@@ -306,7 +306,7 @@ vector 不指定维度以容纳多个 profile；每个 profile 的 ANN 索引使
 
 索引创建由 profile admin/backfill 命令完成，不能在 API 请求内动态创建。写入时服务端校验 vector_dims(embedding)=embedding_profiles.dimension。SQLite 使用 JSON 向量和 Python 测试实现，不声称提供 ANN。
 
-### 2.6 Lexical、审计与安全
+### 2.6 词法检索、审计与安全
 
 SQL：
 
@@ -367,7 +367,7 @@ Lexical 默认组合为 PostgreSQL simple/代码 token、应用层确定性中�
 
 ## 4. API 契约
 
-### 4.1 Append
+### 4.1 追加（Append）
 
 POST /api/v1/append，需要 append 权限。
 
@@ -375,17 +375,17 @@ POST /api/v1/append，需要 append 权限。
 
 服务端事务只写 L0 与 outbox；任何远端依赖失败不得使已提交 L0 回滚。
 
-### 4.2 Search
+### 4.2 检索（Search）
 
 POST /api/v1/search，需要 read 权限。
 
 请求字段：project_key、query、scope_mode、layers、memory_types、limit、include_audit。scope_mode 为 project_only、project_and_global、global_only，默认 project_and_global。响应必须包含 retrieval_mode、degraded、degraded_reason、profile_id、parameters 和结果。结果包含 memory_id、level、scope、content、rank、rrf_score、source_ids；不返回不可比较的跨模式 raw score 作为排名依据。
 
-### 4.3 Context
+### 4.3 上下文（Context）
 
 POST /api/v1/context，需要 read 权限。请求包含 Search 字段以及 task、context_budget_tokens（默认 4000，最大 12000）、skip_pending。只读取 published/accepted 正式记忆；shadow、candidate、draft、needs_review、rejected 一律不进入 Context Builder。响应包含 context、source_ids、retrieval 降级元数据和 budget 使用情况。
 
-### 4.4 Admin
+### 4.4 管理（Admin）
 
 Admin API 需要独立权限且仍强制 project access：
 
@@ -399,7 +399,7 @@ Admin API 需要独立权限且仍强制 project access：
 - POST /api/v1/admin/replay：按项目、时间窗和 job type 生成重放任务。
 - GET /api/v1/health：返回 database、outbox、worker、lexical、vector profile 状态。
 
-## 5. Outbox 与 Job 状态机
+## 5. Outbox 与任务状态机
 
 Outbox：pending → dispatched；失败走 pending/retry_wait → retry_wait → pending，超过上限进入 dead。
 
@@ -407,7 +407,7 @@ Job：pending → running → succeeded；失败走 running → retry_wait → p
 
 running 不能长期停留；lease 过期由 sweeper 转为 retry_wait 或 dead。每个事件与 job 通过 event_id、job_type、aggregate_id、payload_version 形成稳定 job key，重复 dispatch 命中已有 job。事件类型固定为 message.appended.v1、memory.candidate_requested.v1、memory.published.v1、memory.embedding_requested.v1、memory.reindex_requested.v1。
 
-## 6. Worker 领取、lease、重试与幂等
+## 6. Worker 领取、租约、重试与幂等
 
 PostgreSQL 领取必须使用 FOR UPDATE SKIP LOCKED：选择 status 为 pending/retry_wait、next_attempt_at 到期且 lease 为空或过期的任务，按 priority DESC、created_at、id 排序，单批 10 条；同一事务更新为 running、写入 worker_id、locked_at、heartbeat_at、60 秒 lease，并递增 attempt_count。
 
@@ -417,7 +417,7 @@ Worker 每 20 秒 heartbeat，lease 60 秒。连续两次 heartbeat 失败不得
 
 退避固定为 10s、60s、300s、1800s，第五次失败进入 dead；可加确定性 0–10% jitter，测试时注入零 jitter。Handler 幂等键：source_message_id+task_type+classifier_version、source_message_id+task_type+prompt_version+input_hash、memory_id+version+chunk_index、chunk_id+embedding_profile_id。publish 使用 candidate 行锁和 published id。
 
-## 7. Retrieval Engine 固定参数
+## 7. 检索引擎固定参数
 
     lexical_top_k: 30
     dense_top_k: 30
@@ -430,7 +430,7 @@ Worker 每 20 秒 heartbeat，lease 60 秒。连续两次 heartbeat 失败不得
 
 Lexical 采用 simple/代码 token、确定性中文 token、pg_trgm 三路候选；Dense 只使用 active profile。融合公式为 RRF(d)=Σ 1/(rrf_k+rank_i(d))，不融合 cosine 与 lexical raw score。先过滤 project/scope/status，再 RRF；仅对达到最低相关性门槛的结果应用 L3 > L2 > L1 priority。之后按 logical memory 去重、每 memory 最多 2 chunks、global 最多 3 条、最后按 4000 token budget 截断。
 
-## 8. Candidate、Evidence、Policy、Review、Publish
+## 8. 候选记忆、证据、策略、审核与发布
 
 Candidate 状态：generated → validating → approved → published；validating 也可到 rejected 或 needs_review；needs_review 可到 approved/rejected；published 可到 superseded。
 

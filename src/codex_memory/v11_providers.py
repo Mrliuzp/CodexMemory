@@ -55,7 +55,7 @@ class ProfileEmbeddingProvider:
                     )
             return result
 
-        # Local deterministic fallback
+        # 本地确定性回退
         from .v11_embedding import EmbeddingProfileService
 
         return [

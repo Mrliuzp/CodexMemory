@@ -1,63 +1,63 @@
-# Codex Memory V1.1 Agent-1 Schema Implementation Plan
+# Codex Memory V1.1 Agent-1 数据库结构实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **面向自动化执行者：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，按任务逐项实施。本计划使用复选框记录步骤。
 
-**Goal:** Add the V1.1 additive database schema, Alembic migrations, SQLAlchemy models, and SQLite migration coverage while preserving V1 tables and behavior.
+**目标：** 增加 V1.1 增量数据库结构、Alembic 迁移、SQLAlchemy 模型和 SQLite 迁移覆盖，同时保持 V1 表和行为不变。
 
-**Architecture:** Keep the historical V1 `Base` metadata and `memory_embeddings` table compatible. Add the three V1.1 additive columns to the existing message/memory mappings and define new V1.1 tables in a separate `V11Base` metadata so migration 0001 does not eagerly create future tables. Split the migration into 0003–0008 in the executable-spec order, with dialect-aware SQLite types and guarded additive operations.
+**架构：** 保持历史 V1 `Base` 元数据和 `memory_embeddings` 表兼容。为现有消息/记忆映射增加 3 个 V1.1 增量字段，并在独立的 `V11Base` 元数据中定义新的 V1.1 表，避免迁移 0001 提前创建未来表。按照可执行规格将迁移拆分为 0003-0008，并使用方言感知的 SQLite 类型和受保护的增量操作。
 
-**Tech Stack:** Python 3.10+, SQLAlchemy 2, Alembic, PostgreSQL/pgvector, SQLite, pytest.
+**技术栈：** Python 3.10+、SQLAlchemy 2、Alembic、PostgreSQL/pgvector、SQLite、pytest。
 
-## Global Constraints
+## 全局约束
 
-- Only additive database schema, migrations, SQLAlchemy models, migration tests, and implementation status are in scope.
-- Do not modify business API, worker, retrieval, embedding provider, or LLM modules.
-- Preserve old V1 tables and old `memory_embeddings`; create `memory_embedding_vectors` for V1.1 profile-isolated vectors.
-- All V1.1 feature flags default to `false`; processing policy defaults to `fail_closed`, remote providers disabled, and redaction enabled.
-- Migrations must be guarded for an already-upgraded database and remain runnable on SQLite test databases.
-- Run target migration/model tests, `node .\\tools\\static_check.js`, and the full `.venv` pytest suite before the final commit.
+- 范围只包括增量数据库结构、迁移、SQLAlchemy 模型、迁移测试和实施状态。
+- 不修改业务 API、Worker、检索、Embedding Provider 或 LLM 模块。
+- 保留旧 V1 表和旧 `memory_embeddings`；为 V1.1 Profile 隔离向量创建 `memory_embedding_vectors`。
+- 所有 V1.1 功能开关默认 `false`；处理策略默认为 `fail_closed`，远程 Provider 默认禁用，脱敏默认启用。
+- 迁移必须兼容已升级数据库，并可在 SQLite 测试数据库上运行。
+- 最终提交前运行定向迁移/模型测试、`node .\tools\static_check.js` 和完整 `.venv` pytest 测试集。
 
-### Task 1: Add failing SQLite model and migration tests
+### 任务 1：增加失败的 SQLite 模型和迁移测试
 
-**Files:**
-- Create: `tests/test_v11_schema.py`
+**文件：**
+- 新建：`tests/test_v11_schema.py`
 
-- [ ] **Step 1: Write tests for all required V1.1 table names, additive columns, defaults, legacy retention, and SQLite model inserts.**
-- [ ] **Step 2: Run `..\\.venv\\Scripts\\python.exe -m pytest tests/test_v11_schema.py -q` and confirm RED because V1.1 models/tables/migrations do not exist.
+- [ ] **步骤 1：** 为所有必需的 V1.1 表名、增量列、默认值、历史表保留和 SQLite 模型插入编写测试。
+- [ ] **步骤 2：** 运行 `..\.venv\Scripts\python.exe -m pytest tests/test_v11_schema.py -q`，确认由于 V1.1 模型/表/迁移尚不存在而进入 RED 状态。
 
-### Task 2: Add additive SQLAlchemy mappings
+### 任务 2：增加增量 SQLAlchemy 映射
 
-**Files:**
-- Modify: `src/codex_memory/db_models.py`
+**文件：**
+- 修改：`src/codex_memory/db_models.py`
 
-- [ ] **Step 1: Add `occurred_at`, `ingestion_version`, `conflict_status` to `MessageRow` and `scope`, `source_kind`, `review_status` to `MemoryRow` with V1-compatible defaults.
-- [ ] **Step 2: Add `V11Base` and model classes for flags, policies, outbox/jobs/attempts, candidates/evidence/policy results, profiles/retrieval profiles/chunks/vector rows, lexical documents, and audit rows.
-- [ ] **Step 3: Run the focused model test and keep the legacy `Base.metadata` behavior unchanged for new V1.1 tables.
+- [ ] **步骤 1：** 为 `MessageRow` 增加 `occurred_at`、`ingestion_version`、`conflict_status`；为 `MemoryRow` 增加 `scope`、`source_kind`、`review_status`，并提供 V1 兼容默认值。
+- [ ] **步骤 2：** 增加 `V11Base`，以及开关、策略、Outbox/任务/尝试、候选/证据/策略结果、Profile/检索 Profile/分块/向量行、词法文档和审计行模型。
+- [ ] **步骤 3：** 运行定向模型测试，并保持新 V1.1 表不进入历史 `Base.metadata` 的行为不变。
 
-### Task 3: Add guarded Alembic migrations
+### 任务 3：增加受保护的 Alembic 迁移
 
-**Files:**
-- Create: `alembic/versions/0003_v11_additive_columns.py`
-- Create: `alembic/versions/0004_v11_outbox_jobs.py`
-- Create: `alembic/versions/0005_v11_candidates_policy.py`
-- Create: `alembic/versions/0006_v11_embedding_profiles.py`
-- Create: `alembic/versions/0007_v11_lexical_audit.py`
-- Create: `alembic/versions/0008_v11_flags_policies.py`
+**文件：**
+- 新建：`alembic/versions/0003_v11_additive_columns.py`
+- 新建：`alembic/versions/0004_v11_outbox_jobs.py`
+- 新建：`alembic/versions/0005_v11_candidates_policy.py`
+- 新建：`alembic/versions/0006_v11_embedding_profiles.py`
+- 新建：`alembic/versions/0007_v11_lexical_audit.py`
+- 新建：`alembic/versions/0008_v11_flags_policies.py`
 
-- [ ] **Step 1: Implement guarded additive columns and the project/event unique index in 0003; retain the historical global event-key unique constraint.
-- [ ] **Step 2: Implement outbox, processing jobs, attempts, indexes, and checks in 0004.
-- [ ] **Step 3: Implement candidate, evidence, and policy result tables in 0005.
-- [ ] **Step 4: Implement embedding profiles, project retrieval profiles, chunks, and `memory_embedding_vectors` in 0006 using JSON vectors on SQLite and pgvector on PostgreSQL.
-- [ ] **Step 5: Implement lexical search documents and retrieval/security audits in 0007; omit PostgreSQL-only GIN/TSVECTOR operations on SQLite.
-- [ ] **Step 6: Implement feature flags and processing policies in 0008 with all V1.1 flags disabled by default.
-- [ ] **Step 7: Run migration tests through `upgrade head`, inspect columns/tables/indexes/defaults, and test downgrade back to `0002` without dropping legacy tables.
+- [ ] **步骤 1：** 在 0003 中实现受保护的增量列和项目/事件唯一索引，并保留历史全局事件键唯一约束。
+- [ ] **步骤 2：** 在 0004 中实现 Outbox、处理任务、尝试记录、索引和检查约束。
+- [ ] **步骤 3：** 在 0005 中实现候选、证据和策略结果表。
+- [ ] **步骤 4：** 在 0006 中实现 Embedding Profile、项目检索 Profile、分块和 `memory_embedding_vectors`；SQLite 使用 JSON 向量，PostgreSQL 使用 pgvector。
+- [ ] **步骤 5：** 在 0007 中实现词法检索文档与检索/安全审计；SQLite 跳过 PostgreSQL 专属的 GIN/TSVECTOR 操作。
+- [ ] **步骤 6：** 在 0008 中实现功能开关和处理策略，所有 V1.1 开关默认关闭。
+- [ ] **步骤 7：** 通过 `upgrade head` 运行迁移测试，检查列/表/索引/默认值，并降级回 `0002`，确认不删除历史表。
 
-### Task 4: Refactor and verify
+### 任务 4：重构与验证
 
-**Files:**
-- Modify: `IMPLEMENTATION_STATUS.md`
+**文件：**
+- 修改：`IMPLEMENTATION_STATUS.md`
 
-- [ ] **Step 1: Run target tests, static check, and full pytest; investigate only Agent-1 failures without changing out-of-scope modules.
-- [ ] **Step 2: Update the Agent-1 row to `completed`, record the final commit hash and exact test results, and record any compatibility decisions.
-- [ ] **Step 3: Review `git diff` and `git status`, stage only Agent-1 files, and commit with a message beginning `feat: v1.1 add additive schema`.
-- [ ] **Step 4: Re-run the final verification commands after the commit and report the commit, files, and outputs.
+- [ ] **步骤 1：** 运行定向测试、静态检查和完整 pytest；只处理 Agent-1 范围内的失败，不修改范围外模块。
+- [ ] **步骤 2：** 将 Agent-1 状态更新为 `completed`，记录最终提交哈希、精确测试结果和兼容性决策。
+- [ ] **步骤 3：** 检查 `git diff` 和 `git status`，只暂存 Agent-1 文件，并以 `feat: v1.1 add additive schema` 开头的消息提交。
+- [ ] **步骤 4：** 提交后重新运行最终验证命令，并报告提交、文件和输出。

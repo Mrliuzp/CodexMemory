@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -65,7 +65,7 @@ def get_db() -> Session:
 def _project_or_404(db: Session, project_id: int) -> ProjectRow:
     row = db.get(ProjectRow, project_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="project not found")
+        raise HTTPException(status_code=404, detail="项目不存在")
     return row
 
 
@@ -89,7 +89,7 @@ def _row_dict(row: Any, *keys: str) -> dict[str, Any]:
     return d
 
 
-app = FastAPI(title="Codex Memory Admin", version="1.0.0")
+app = FastAPI(title="Codex Memory 管理后台", version="1.0.0")
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -98,7 +98,7 @@ if STATIC.is_dir():
 
 
 # ---------------------------------------------------------------------------
-# Health
+# 健康检查
 # ---------------------------------------------------------------------------
 
 
@@ -155,7 +155,7 @@ def admin_health():
 
 
 # ---------------------------------------------------------------------------
-# Dashboard stats
+# 仪表盘统计
 # ---------------------------------------------------------------------------
 
 
@@ -315,7 +315,7 @@ def admin_stats():
 
 
 # ---------------------------------------------------------------------------
-# Projects
+# 项目
 # ---------------------------------------------------------------------------
 
 
@@ -435,7 +435,7 @@ def get_project(project_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Jobs
+# 任务
 # ---------------------------------------------------------------------------
 
 
@@ -516,11 +516,11 @@ def retry_job(job_id: int):
     with session_factory() as db:
         job = db.get(ProcessingJobRow, job_id)
         if job is None:
-            raise HTTPException(status_code=404, detail="job not found")
+            raise HTTPException(status_code=404, detail="任务不存在")
         if job.status not in {"dead", "retry_wait"}:
             raise HTTPException(
                 status_code=409,
-                detail=f"job status is {job.status}, not retryable",
+                detail=f"任务状态为 {job.status}，不可重试",
             )
         job.status = "pending"
         job.next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -545,7 +545,7 @@ def retry_job(job_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Candidates
+# 候选记忆
 # ---------------------------------------------------------------------------
 
 
@@ -613,12 +613,12 @@ def review_candidate(candidate_id: int, payload: ReviewRequest):
     decision = payload.decision
     if decision not in {"approve", "reject"}:
         raise HTTPException(
-            status_code=422, detail="decision must be approve or reject"
+            status_code=422, detail="decision 必须是 approve 或 reject"
         )
     with session_factory() as db:
         candidate = db.get(MemoryCandidateRow, candidate_id)
         if candidate is None:
-            raise HTTPException(status_code=404, detail="candidate not found")
+            raise HTTPException(status_code=404, detail="候选记忆不存在")
         candidate.status = "rejected" if decision == "reject" else "approved"
         db.add(
             CandidatePolicyResultRow(
@@ -638,7 +638,7 @@ def review_candidate(candidate_id: int, payload: ReviewRequest):
 
 
 # ---------------------------------------------------------------------------
-# Embedding Profiles
+# 嵌入配置
 # ---------------------------------------------------------------------------
 
 
@@ -709,7 +709,7 @@ def create_profile(payload: ProfileCreateRequest):
 
 
 # ---------------------------------------------------------------------------
-# Feature Flags
+# 功能开关
 # ---------------------------------------------------------------------------
 
 
@@ -809,7 +809,7 @@ def get_db_impl() -> Session:
 
 
 # ---------------------------------------------------------------------------
-# Memories
+# 记忆
 # ---------------------------------------------------------------------------
 
 
@@ -877,7 +877,7 @@ def list_memories(
 
 
 # ---------------------------------------------------------------------------
-# L0 Raw Logs
+# L0 原始日志
 # ---------------------------------------------------------------------------
 
 
@@ -944,7 +944,7 @@ def list_logs(
 
 
 # ---------------------------------------------------------------------------
-# Token Usage
+# 令牌用量
 # ---------------------------------------------------------------------------
 
 
@@ -982,7 +982,7 @@ def get_token_usage(
 
 
 # ---------------------------------------------------------------------------
-# Audit Logs
+# 审计日志
 # ---------------------------------------------------------------------------
 
 
@@ -1029,7 +1029,7 @@ def list_audit_logs(
 
 
 # ---------------------------------------------------------------------------
-# SPA fallback 鈥?serve index.html for all frontend routes
+# SPA 回退：为所有前端路由提供 index.html
 # ---------------------------------------------------------------------------
 
 
@@ -1037,12 +1037,12 @@ def list_audit_logs(
 @app.get("/{path:path}")
 async def serve_spa(path: str = ""):
     if path.startswith("api/"):
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail="未找到资源")
     index = STATIC / "index.html"
     if index.is_file():
         return FileResponse(str(index))
     return JSONResponse(
-        {"status": "ok", "message": "Codex Memory Admin API"}, 
+        {"status": "ok", "message": "Codex Memory 管理 API"},
         status_code=200,
     )
 

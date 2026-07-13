@@ -56,7 +56,7 @@ def test_concurrent_append_with_same_event_key_is_idempotent():
         except AppendConflictError:
             pass
         except Exception as exc:
-            # may happen on SQLite without SKIP LOCKED; acceptable in test
+            # SQLite 未启用 SKIP LOCKED 时可能出现，测试中允许这种情况
             import logging
             logging.warning("concurrent append error: %s", exc)
 

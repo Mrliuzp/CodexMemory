@@ -55,7 +55,7 @@ def _page(data: list[dict[str, Any]], total: int, page: int, page_size: int, req
 
 def _validate_sort(sort: str) -> None:
     if sort not in SORT_FIELDS:
-        raise ValueError(f"unsupported sort field: {sort}")
+        raise ValueError(f"不支持的排序字段：{sort}")
 
 def _scope_allowed(session: Session, project: ProjectRow, scope_id: str | None) -> bool:
     if not scope_id:
@@ -81,9 +81,9 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         expected_username = os.environ.get("CODEX_MEMORY_ADMIN_USERNAME", "admin")
         expected_password = os.environ.get("CODEX_MEMORY_ADMIN_PASSWORD", "")
         if not expected_password:
-            raise _error(request, "login_not_configured", "admin login is not configured", status.HTTP_503_SERVICE_UNAVAILABLE)
+            raise _error(request, "login_not_configured", "管理后台登录尚未配置", status.HTTP_503_SERVICE_UNAVAILABLE)
         if not (secrets.compare_digest(payload.username, expected_username) and secrets.compare_digest(payload.password, expected_password)):
-            raise _error(request, "invalid_credentials", "invalid username or password", status.HTTP_401_UNAUTHORIZED)
+            raise _error(request, "invalid_credentials", "用户名或密码错误", status.HTTP_401_UNAUTHORIZED)
         project_key = os.environ.get("CODEX_MEMORY_ADMIN_PROJECT_KEY", os.environ.get("CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY", "*"))
         try:
             token = issue_admin_session(payload.username, project_key=project_key)
@@ -92,7 +92,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         return {"access_token": token, "token_type": "bearer", "expires_in": 8 * 60 * 60, "request_id": _request_id(request)}
     def principal(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Principal:
         if credentials is None or credentials.scheme.lower() != "bearer":
-            error = _error(request, "authentication_required", "bearer token required", status.HTTP_401_UNAUTHORIZED)
+            error = _error(request, "authentication_required", "需要 Bearer 令牌", status.HTTP_401_UNAUTHORIZED)
             error.headers["WWW-Authenticate"] = "Bearer"
             raise error
         try:
@@ -112,9 +112,9 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         with session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
             if project is None:
-                raise _error(request, "project_not_found", "project not found", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
             if not _scope_allowed(session, project, scope_id):
-                raise _error(request, "scope_access_denied", f"token cannot access scope: {scope_id}", status.HTTP_403_FORBIDDEN)
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{scope_id}", status.HTTP_403_FORBIDDEN)
             session.expunge(project)
             return project
 

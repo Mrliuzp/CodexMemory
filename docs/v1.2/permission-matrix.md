@@ -1,11 +1,11 @@
-# P0 Permission Matrix
+# P0 权限矩阵
 
-| Actor | Authentication | Project scope | P0 reads | P0 writes |
+| 角色 | 身份认证 | 项目作用域 | P0 读取 | P0 写入 |
 | --- | --- | --- | --- | --- |
-| Project reader | Bearer API key with `read` | Token project only | Yes | No |
-| Project admin | Bearer API key with `admin` | Authorized projects | Yes | No in P0 |
-| Invalid or inactive token | None | None | No, 401 | No |
-| Valid token outside project | Valid | Denied, 403 | No | No |
-| Valid token outside Scope | Valid | Denied, 403 | No | No |
+| 项目读取者 | 带 `read` 权限的 Bearer API Key | 仅令牌中的项目 | 是 | 否 |
+| 项目管理员 | 带 `admin` 权限的 Bearer API Key | 已授权项目 | 是 | P0 中不允许 |
+| 无效或未启用令牌 | 无 | 无 | 否，401 | 否 |
+| 有效令牌访问项目外数据 | 有效 | 拒绝，403 | 否 | 否 |
+| 有效令牌访问作用域外数据 | 有效 | 拒绝，403 | 否 | 否 |
 
-Scope checks happen after project authorization and before data queries. Client-provided project or Scope identifiers never broaden the principal's grants.
+作用域检查发生在项目授权之后、数据查询之前。客户端提供的项目或作用域标识符不能扩大主体已有的授权范围。

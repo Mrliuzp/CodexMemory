@@ -3,7 +3,7 @@
 ## 文档信息
 
 - 目标版本：V1.2
-- 主题：Admin Console & Historical Knowledge Import
+- 主题：管理控制台与历史知识导入
 - 状态：方案 A 已确认，等待计划文档审阅
 - 日期：2026-07-13
 - 前置版本：V1.1
@@ -137,7 +137,7 @@ apps/admin-web/
 
 第一版角色为 `Viewer`、`Reviewer`、`Operator`、`Admin`。权限使用 `resource:action`，并叠加项目授权：角色定义最大权限，`project_grants` 决定可访问的项目集合。所有列表、详情和命令均以当前主体的 grant 作为不可跳过的过滤条件。
 
-Phase 1 将定义并落地最小授权模型：`dashboard:read`、`project:read`、`scope:read`、`raw_memory:read`、`memory:read`、`candidate:read`、`job:read`、`outbox:read`、`retrieval:debug`、`audit:read`。写权限将在 Phase 2-5 按实际命令增加，不能预先开放。
+Phase 1 将定义并落地最小授权模型：`dashboard:read`、`project:read`、`scope:read`、`raw_memory:read`、`memory:read`、`candidate:read`、`job:read`、`outbox:read`、`retrieval:debug`、`audit:read`。写权限将在 阶段 2-5 按实际命令增加，不能预先开放。
 
 ### 4.2 Scope 的兼容策略
 
@@ -170,7 +170,7 @@ completed -> rollback_requested -> rolling_back -> rolled_back
 
 ## 5. 分阶段路线图
 
-### Phase 1 / P0：只读管理控制台基座
+### 阶段 1 / P0：只读管理控制台基座
 
 目标：在不开放任何后台业务写操作的前提下，提供可独立部署、具备项目隔离与审计能力的管理控制台。
 
@@ -178,37 +178,37 @@ completed -> rollback_requested -> rolling_back -> rolled_back
 
 不包含：文件上传、导入命令、Candidate 发布、Job 重试、Outbox Replay、Embedding Backfill、Provider 配置和 Feature Flag 变更。
 
-### Phase 2：历史知识导入基础管线
+### 阶段 2：历史知识导入基础管线
 
 目标：实现 Markdown、TXT、JSON、JSONL 和文本粘贴的受控导入。
 
 范围：Import Batch/File/Chunk/Issue 模型、文件存储抽象、解析器、结构化切块、规范化、精确去重、脱敏、Prompt Injection 检测、Candidate 生成、Worker 处理、进度与失败重试。导入必须显式指定项目与 Scope，且只能以 Candidate 结束。
 
-### Phase 3：审核、发布与回滚
+### 阶段 3：审核、发布与回滚
 
 目标：完成历史知识从 Candidate 到正式 Memory 的治理闭环。
 
 范围：批量批准/拒绝、Policy 和 Evidence 展示、正式发布、Embedding 生成、Memory 禁用/恢复、批次回滚与冲突处理、全链路审计。回滚不得静默覆盖发布后的人为修改。
 
-### Phase 4：高级解析器
+### 阶段 4：高级解析器
 
 目标：扩展历史材料支持范围。
 
 范围：PDF、DOCX、SQL、代码与 ZIP。ZIP 必须防路径穿越、压缩炸弹、过深嵌套和总大小失控；解析结果必须可定位到页码、标题、代码对象或 SQL 对象。
 
-### Phase 5：受控运维控制面
+### 阶段 5：受控运维控制面
 
 目标：向有权限的 Operator/Admin 开放已存在能力的受控命令入口。
 
 范围：Job Retry、Outbox Replay、超时锁释放、Embedding Backfill、Provider 连通性测试、项目预算变更、Feature Flag 灰度和回滚。所有危险操作要求二次确认与原因，且经 Command Service 调用 V1.1 领域服务。
 
-### Phase 6：Retrieval Playground 与质量分析
+### 阶段 6：Retrieval Playground 与质量分析
 
 目标：提供可解释的检索调试和知识质量观测。
 
 范围：Lexical/Dense 候选、RRF 分数、Scope/Policy/Budget 过滤原因、最终上下文预览、Retrieval Audit、命中率、Candidate 转化率、Memory 使用统计和 Shadow 对比。调试请求必须始终在授权项目和 Scope 内执行。
 
-## 6. Phase 1 / P0 可执行任务清单
+## 6. 阶段 1 / P0 可执行任务清单
 
 每项完成后必须运行本项测试和既有 V1.1 回归；任务按序执行，除明确说明可并行的前端工作外，不跳过依赖。
 
@@ -260,7 +260,7 @@ GET /api/admin/v1/audit-events
 
 ## 7. 后续阶段的命令与安全边界
 
-### 7.1 Phase 2 导入命令
+### 7.1 阶段 2 导入命令
 
 ```text
 POST /api/admin/v1/import-batches
@@ -272,7 +272,7 @@ POST /api/admin/v1/import-batches/{id}:retry
 
 上传接口只持久化源文件和创建 Job，绝不在 HTTP 请求中同步解析大文件。Worker 根据 `import_batch_id` 重新加载项目、Scope、权限策略和 Feature Flag。文件 SHA-256、Chunk normalized hash、内容定位和安全问题必须保留为可审计记录。
 
-### 7.2 Phase 3-5 危险命令
+### 7.2 阶段 3-5 危险命令
 
 包括 Candidate 批准/拒绝、Memory 发布/禁用、批次回滚、Job Retry、Outbox Replay、释放锁、Embedding Backfill、Provider 测试、预算更新和 Flag Rollout。每条命令都必须：
 
@@ -345,4 +345,4 @@ P0 启动前应先创建或更新以下文档：
 - `docs/v1.2/migration-strategy.md`
 - `docs/v1.2/p0-acceptance.md`
 
-在本设计获审阅批准后，应使用独立的实施计划将 P0-01 至 P0-12 拆成文件级步骤、测试先行顺序和检查点；在 Phase 1 验收后，再分别为 Phase 2-6 生成同等粒度的实施计划。
+在本设计获审阅批准后，应使用独立的实施计划将 P0-01 至 P0-12 拆成文件级步骤、测试先行顺序和检查点；在 Phase 1 验收后，再分别为 阶段 2-6 生成同等粒度的实施计划。

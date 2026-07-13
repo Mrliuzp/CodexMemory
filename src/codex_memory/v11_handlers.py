@@ -31,7 +31,7 @@ class V11JobHandlers:
             return
         if claim.job_type == "memory.reindex_requested.v1":
             return
-        raise PermanentJobError(f"unsupported job type: {claim.job_type}")
+        raise PermanentJobError(f"不支持的任务类型：{claim.job_type}")
 
     def _handle_candidate_request(self, payload: dict[str, Any]) -> None:
         project_id = int(payload["project_id"])

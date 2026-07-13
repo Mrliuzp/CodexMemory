@@ -36,8 +36,8 @@ async function submit() {
 <template>
   <main class="login-page">
     <section class="login-panel">
-      <div class="brand login-brand"><div class="brand-mark">CM</div><div><strong>Codex Memory</strong><small>Admin Console</small></div></div>
-      <div class="login-heading"><span class="eyebrow">SECURE ADMIN ACCESS</span><h1>登录后台</h1><p>使用管理员账号进入 Codex Memory 管理控制台。</p></div>
+      <div class="brand login-brand"><div class="brand-mark">CM</div><div><strong>Codex Memory</strong><small>管理控制台</small></div></div>
+      <div class="login-heading"><span class="eyebrow">安全管理登录</span><h1>登录后台</h1><p>使用管理员账号进入 Codex Memory 管理控制台。</p></div>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
       <el-form class="login-form" @submit.prevent="submit">
         <el-form-item label="用户名"><el-input v-model="username" size="large" autocomplete="username" placeholder="管理员用户名"><template #prefix><el-icon><User /></el-icon></template></el-input></el-form-item>
