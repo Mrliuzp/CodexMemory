@@ -9,6 +9,7 @@ export const routes = [
   { path: '/', redirect: '/dashboard' },
   { path: '/dashboard', component: DashboardView, meta: { requiresAuth: true, label: '运行概览' } },
   { path: '/projects', component: ProjectsView, meta: { requiresAuth: true, label: '项目与 Scope' } },
+  { path: '/record', redirect: (to) => ({ path: '/records', query: to.query }), meta: { requiresAuth: true } },
   { path: '/records', component: RecordsView, meta: { requiresAuth: true, label: '只读数据' } },
 ]
 
