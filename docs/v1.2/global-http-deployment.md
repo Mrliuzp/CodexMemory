@@ -143,6 +143,28 @@ $env:COMPOSE_PARALLEL_LIMIT = '1'
 docker compose up -d --build
 docker compose ps
 Invoke-RestMethod http://127.0.0.1:8001/mcp -Method Post -ContentType 'application/json' -Body '{}' -SkipHttpErrorCheck
+
+@"
+import anyio, httpx, json, os
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+async def main():
+    headers = {"Authorization": f"Bearer {os.environ['CODEX_MEMORY_MCP_TOKEN']}"}
+    async with httpx.AsyncClient(headers=headers) as client:
+        async with streamable_http_client(
+            "http://127.0.0.1:8001/mcp", http_client=client
+        ) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool("health", {})
+    assert not result.isError
+    payload = json.loads(next(item.text for item in result.content if hasattr(item, "text")))
+    print(payload["status"])
+
+anyio.run(main)
+"@ | ..venvScriptspython.exe -
+
 Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 .\.venv\Scripts\python.exe -m pytest tests/test_compose_contract.py tests/test_v1_mcp_transport.py -q
 .\.venv\Scripts\python.exe -m pytest -q
@@ -153,6 +175,7 @@ Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 - 采用 `COMPOSE_PARALLEL_LIMIT=1` 的 `docker compose up -d --build` 构建成功。Docker Hub 鉴权超时后，使用 AWS 官方公共 ECR 提供的相同镜像完成本地标记；未改变 Compose 配置。
 - `admin-web`、`api`、`mcp`、`postgres` 和 `worker` 均为 Up，`api` 与 `postgres` 为 healthy。`admin-web` 仅发布 `127.0.0.1:5174`，`mcp` 仅发布 `127.0.0.1:8001`，API 没有宿主机端口。
 - `POST http://127.0.0.1:8001/mcp` 未携带 Authorization 返回 HTTP 401。
+- 使用 `$env:CODEX_MEMORY_MCP_TOKEN` 的官方 MCP 客户端成功完成 `initialize` 和 `health` 工具调用，返回 `status=ok`。
 - `GET http://127.0.0.1:5174/api/v1/health` 返回 `status=ok`、`database=ok`、`vector=ok`。
 - 焦点测试结果为 `11 passed`；全量结果为 `199 passed, 1 skipped`，并有 11 条既有弃用警告。
 - 前端构建曾因本地 `node_modules` 进入构建上下文而失败；`apps/admin-web/.dockerignore` 现排除依赖、产物和本地缓存。
