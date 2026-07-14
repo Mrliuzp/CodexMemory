@@ -253,12 +253,12 @@ Copy-Item .env.example .env
 # 编辑 .env，修改 POSTGRES_PASSWORD、数据库 URL 中对应的密码和 SERVICE_TOKEN
 docker compose up -d --build
 docker compose ps
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 ```
 
 服务地址：
 
-- API：`http://127.0.0.1:8000`
+- 管理后台与 API 统一入口：`http://127.0.0.1:5174`（API 路径前缀为 `/api`）
 - MCP Streamable HTTP：`http://127.0.0.1:8001/mcp`
 - 数据库数据：Docker 命名卷 `pgdata`
 
