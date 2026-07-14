@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import hash_token
-from .config import Settings
+from .config import Settings, is_placeholder_value
 from .db import create_engine_from_url, create_session_factory
 from .db_models import ApiKeyRow, ProjectRow
 
@@ -22,8 +22,8 @@ def ensure_bootstrap(
 ) -> None:
     if not project_key.strip():
         raise ValueError("引导项目键不能为空")
-    if not token.strip() or token == "change-me":
-        raise ValueError("必须配置非占位符的引导令牌（placeholder）")
+    if is_placeholder_value(token):
+        raise ValueError("必须配置非占位符的引导令牌")
 
     token_hash = hash_token(token)
     with session_factory() as session:

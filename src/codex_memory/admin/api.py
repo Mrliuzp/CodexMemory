@@ -15,6 +15,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..auth import PermissionDenied, ProjectAccessDenied, Principal, TokenAuthenticationError, authenticate_bearer, require_permission, require_project_access, issue_admin_session
+from ..config import is_placeholder_admin_username, is_placeholder_value
 from ..db_models import AuditLogRow, MemoryRow, MessageRow, ProjectRow
 from ..v11_models import MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, RetrievalAuditRow
 
@@ -78,10 +79,20 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
 
     @router.post("/login")
     def login(payload: AdminLoginRequest, request: Request) -> dict[str, Any]:
-        expected_username = os.environ.get("CODEX_MEMORY_ADMIN_USERNAME", "admin")
+        expected_username = os.environ.get("CODEX_MEMORY_ADMIN_USERNAME", "")
         expected_password = os.environ.get("CODEX_MEMORY_ADMIN_PASSWORD", "")
-        if not expected_password:
-            raise _error(request, "login_not_configured", "管理后台登录尚未配置", status.HTTP_503_SERVICE_UNAVAILABLE)
+        session_secret = os.environ.get("CODEX_MEMORY_ADMIN_SESSION_SECRET", "")
+        if (
+            is_placeholder_admin_username(expected_username)
+            or is_placeholder_value(expected_password)
+            or is_placeholder_value(session_secret)
+        ):
+            raise _error(
+                request,
+                "login_not_configured",
+                "管理后台登录配置缺失或仍为占位符",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         if not (secrets.compare_digest(payload.username, expected_username) and secrets.compare_digest(payload.password, expected_password)):
             raise _error(request, "invalid_credentials", "用户名或密码错误", status.HTTP_401_UNAUTHORIZED)
         project_key = os.environ.get("CODEX_MEMORY_ADMIN_PROJECT_KEY", os.environ.get("CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY", "*"))

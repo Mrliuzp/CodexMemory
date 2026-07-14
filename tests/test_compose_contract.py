@@ -72,8 +72,8 @@ def test_env_example_uses_placeholders_not_real_tokens() -> None:
 def test_mcp_service_receives_independent_api_and_mcp_tokens() -> None:
     environment = _compose_services()["mcp"]["environment"]
 
-    assert environment["CODEX_MEMORY_API_TOKEN"] == "${CODEX_MEMORY_SERVICE_TOKEN}"
-    assert environment["CODEX_MEMORY_MCP_TOKEN"] == "${CODEX_MEMORY_MCP_TOKEN}"
+    assert environment["CODEX_MEMORY_API_TOKEN"].startswith("${CODEX_MEMORY_SERVICE_TOKEN:?")
+    assert environment["CODEX_MEMORY_MCP_TOKEN"].startswith("${CODEX_MEMORY_MCP_TOKEN:?")
 
 
 def test_admin_web_build_context_excludes_local_artifacts() -> None:
@@ -84,3 +84,14 @@ def test_admin_web_build_context_excludes_local_artifacts() -> None:
     assert "npm-debug.log*" in ignored_paths
     assert "yarn-debug.log*" in ignored_paths
     assert "pnpm-debug.log*" in ignored_paths
+
+def test_compose_requires_non_default_admin_credentials() -> None:
+    environment = _compose_services()["api"]["environment"]
+
+    for variable in (
+        "CODEX_MEMORY_ADMIN_USERNAME",
+        "CODEX_MEMORY_ADMIN_PASSWORD",
+        "CODEX_MEMORY_ADMIN_SESSION_SECRET",
+    ):
+        assert environment[variable].startswith(f"${{{variable}:?")
+        assert ":-" not in environment[variable]

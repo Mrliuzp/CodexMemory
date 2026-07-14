@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
@@ -34,5 +36,29 @@ def test_bootstrap_rejects_placeholder_token() -> None:
     create_schema(engine)
     factory = create_session_factory(engine)
 
-    with pytest.raises(ValueError, match="placeholder"):
+    with pytest.raises(ValueError, match="占位符"):
         ensure_bootstrap(factory, "demo", "change-me")
+
+
+def test_bootstrap_rejects_service_token_from_env_example_without_writing_keys() -> None:
+    from sqlalchemy import select
+
+    from codex_memory.bootstrap import ensure_bootstrap
+    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db_models import ApiKeyRow, ProjectRow
+
+    service_token = next(
+        line.partition("=")[2]
+        for line in Path(".env.example").read_text(encoding="utf-8").splitlines()
+        if line.startswith("CODEX_MEMORY_SERVICE_TOKEN=")
+    )
+    engine = create_sqlite_engine()
+    create_schema(engine)
+    factory = create_session_factory(engine)
+
+    with pytest.raises(ValueError, match="占位符"):
+        ensure_bootstrap(factory, "demo", service_token)
+
+    with factory() as session:
+        assert session.scalars(select(ProjectRow)).all() == []
+        assert session.scalars(select(ApiKeyRow)).all() == []

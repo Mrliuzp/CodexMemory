@@ -172,7 +172,10 @@ def create_v1_app(session_factory: Any) -> FastAPI:
     def readiness() -> dict[str, str]:
         from .runtime_health import build_readiness
 
-        return build_readiness(session_factory)
+        payload = build_readiness(session_factory)
+        if payload["status"] != "ok":
+            return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
+        return payload
     from .admin import create_admin_router
 
     app.include_router(create_admin_router(session_factory))
