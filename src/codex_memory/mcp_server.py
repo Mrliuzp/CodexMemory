@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 
+from .mcp_auth import MCP_REQUIRED_SCOPES
 from .models import Layer
 from .service import MemoryService
 
@@ -120,9 +123,28 @@ def create_server(db_path: str | Path = "memory.db") -> FastMCP:
 def run_server(db_path: str | Path = "memory.db", transport: str = "stdio") -> None:
     create_server(db_path).run(transport=transport)
 
-def create_v1_server(api_client: Any, host: str = "127.0.0.1", port: int = 8000) -> FastMCP:
+def create_v1_server(
+    api_client: Any,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    token_verifier: TokenVerifier | None = None,
+) -> FastMCP:
     """Create the HTTP-backed MCP surface used by deployed Codex clients."""
-    server = FastMCP("Codex Memory V1 MCP", host=host, port=port, stateless_http=True)
+    auth = None
+    if token_verifier is not None:
+        auth = AuthSettings(
+            issuer_url="http://127.0.0.1:8001",
+            resource_server_url="http://127.0.0.1:8001/mcp",
+            required_scopes=MCP_REQUIRED_SCOPES,
+        )
+    server = FastMCP(
+        "Codex Memory V1 MCP",
+        host=host,
+        port=port,
+        stateless_http=True,
+        token_verifier=token_verifier,
+        auth=auth,
+    )
 
     @server.tool()
     def build_context(project: str, task: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
