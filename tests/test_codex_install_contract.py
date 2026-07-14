@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -16,3 +17,9 @@ def test_skill_allows_implicit_invocation() -> None:
     ).read_text(encoding="utf-8")
 
     assert "allow_implicit_invocation: true" in metadata
+
+def test_global_hook_calls_installed_runtime() -> None:
+    hooks = json.loads(Path("codex/hooks.global.json").read_text(encoding="utf-8"))
+
+    assert "UserPromptSubmit" in hooks["hooks"]
+    assert "Stop" in hooks["hooks"]

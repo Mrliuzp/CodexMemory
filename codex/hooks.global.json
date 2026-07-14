@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "commandWindows": "\"%USERPROFILE%\\.codex\\codex-memory-runtime\\Scripts\\codex-memory.exe\" hook-user",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "commandWindows": "\"%USERPROFILE%\\.codex\\codex-memory-runtime\\Scripts\\codex-memory.exe\" hook-assistant",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
