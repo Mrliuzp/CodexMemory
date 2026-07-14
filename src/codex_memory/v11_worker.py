@@ -100,6 +100,10 @@ class V11JobWorker:
         now = self.now()
         claims: list[JobClaim] = []
         with self.session_factory() as session:
+            dialect = session.bind.dialect.name if session.bind is not None else ""
+            if dialect == "sqlite":
+                # SQLite 没有 SKIP LOCKED，先获取写锁以原子化选择与领取。
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             query = (
                 select(ProcessingJobRow)
                 .where(
@@ -114,7 +118,7 @@ class V11JobWorker:
                 )
                 .limit(limit)
             )
-            if session.bind is not None and session.bind.dialect.name == "postgresql":
+            if dialect == "postgresql":
                 query = query.with_for_update(skip_locked=True)
             jobs = session.scalars(query).all()
             for job in jobs:
