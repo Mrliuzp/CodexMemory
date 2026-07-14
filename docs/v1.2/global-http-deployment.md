@@ -80,3 +80,51 @@ $NewMcpToken = 'change-me-new-mcp-token'
 [Environment]::SetEnvironmentVariable('CODEX_MEMORY_MCP_TOKEN', $NewMcpToken, 'User')
 docker compose up -d --force-recreate mcp
 ```
+
+## 升级与回滚
+
+升级前先完成备份，并确认 `.env` 中的数据库连接、服务 Token 和 MCP Token 已保留。拉取新版本后重建镜像并按依赖顺序启动：
+
+```powershell
+git pull --ff-only
+docker compose pull
+docker compose up -d --build
+docker compose ps
+```
+
+API 容器启动时会执行 `alembic upgrade head`。迁移会修改持久化的 `pgdata` 数据卷；不要在没有可恢复备份的情况下跳过备份，也不要通过删除卷来解决迁移失败。升级后使用 `/health/live` 和 `/health/ready` 确认服务可用，再让 MCP 客户端恢复连接。
+
+需要回滚时，先停止新版本服务，检出已验证的旧版本并重新构建。数据库迁移通常不能自动降级：只有在该版本提供并验证过对应的 downgrade 时才执行；否则应在隔离环境验证后，从升级前的逻辑备份恢复数据库。回滚期间保留 `.env` 和 `pgdata`，避免执行 `docker compose down -v`。
+
+```powershell
+docker compose stop
+git checkout <已验证的版本>
+docker compose up -d --build
+```
+
+## 故障排查
+
+先查看服务状态、健康检查和最近日志；`live` 表示进程存活，`ready` 还会确认依赖已就绪。
+
+```powershell
+docker compose ps
+docker compose logs --tail 200 postgres api mcp worker admin-web
+docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=5).read().decode())"
+docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5).read().decode())"
+```
+
+若 MCP 或管理后台无法启动，检查宿主机端口是否已被占用：
+
+```powershell
+Get-NetTCPConnection -LocalPort 8001,5174 -ErrorAction SilentlyContinue
+```
+
+停止占用进程或修改 Compose 的宿主机端口映射后重新执行 `docker compose up -d`。不要为排障给 API 添加 `ports`；API 应继续只通过 Compose 内部网络的 `api:8000` 提供服务。
+
+若 `ready` 失败或 API/worker 日志出现数据库连接错误，确认 `postgres` 健康、`POSTGRES_PASSWORD` 与 `CODEX_MEMORY_DATABASE_URL` 中的密码一致，并验证 URL 的主机仍是 `postgres`、端口为 `5432`。修正 `.env` 后重建依赖该变量的容器：
+
+```powershell
+docker compose up -d --force-recreate api worker mcp
+```
+
+MCP 返回 `401` 时，通常是客户端未发送 Bearer Token、Token 已轮换，或使用了错误的 `CODEX_MEMORY_MCP_TOKEN`。MCP 返回 `403` 时，先确认客户端调用的是 `http://127.0.0.1:8001/mcp`，再检查 MCP 使用的 `CODEX_MEMORY_SERVICE_TOKEN` 能否代表已引导的服务身份。修改 Token 后同时更新 `.env`、客户端环境变量并重建 MCP；不要把 API 服务 Token 当作 MCP 客户端 Token 使用。
