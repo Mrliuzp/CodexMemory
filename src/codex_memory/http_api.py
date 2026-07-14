@@ -163,6 +163,16 @@ def create_v1_app(session_factory: Any) -> FastAPI:
 
     service = V1MemoryService(session_factory)
     app = FastAPI(title="Codex Memory V1 API", version="1.0.0")
+
+    @app.get("/health/live")
+    def liveness() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/health/ready")
+    def readiness() -> dict[str, str]:
+        from .runtime_health import build_readiness
+
+        return build_readiness(session_factory)
     from .admin import create_admin_router
 
     app.include_router(create_admin_router(session_factory))
