@@ -75,8 +75,8 @@ docker compose exec -T postgres pg_dump -U codex -d codex_memory | Out-File -Enc
 
 ```powershell
 docker compose stop mcp
-$NewMcpToken = 'change-me-new-mcp-token'
-# 将 .env 中的 CODEX_MEMORY_MCP_TOKEN 替换为 $NewMcpToken。
+$NewMcpToken = & .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
+# 将 .env 中的 CODEX_MEMORY_MCP_TOKEN 替换为 $NewMcpToken；不要输出或提交该值。
 [Environment]::SetEnvironmentVariable('CODEX_MEMORY_MCP_TOKEN', $NewMcpToken, 'User')
 docker compose up -d --force-recreate mcp
 ```
@@ -177,5 +177,5 @@ Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 - `POST http://127.0.0.1:8001/mcp` 未携带 Authorization 返回 HTTP 401。
 - 使用 `$env:CODEX_MEMORY_MCP_TOKEN` 的官方 MCP 客户端成功完成 `initialize` 和 `health` 工具调用，返回 `status=ok`。
 - `GET http://127.0.0.1:5174/api/v1/health` 返回 `status=ok`、`database=ok`、`vector=ok`。
-- 焦点测试结果为 `11 passed`；全量结果为 `200 passed, 1 skipped`，并有 11 条既有弃用警告。
+- 焦点测试结果为 `11 passed`；全量结果为 `217 passed, 1 skipped`，并有 12 条既有弃用警告。
 - 前端构建曾因本地 `node_modules` 进入构建上下文而失败；`apps/admin-web/.dockerignore` 现排除依赖、产物和本地缓存。

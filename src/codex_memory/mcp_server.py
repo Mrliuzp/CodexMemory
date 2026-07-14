@@ -126,15 +126,15 @@ def run_server(db_path: str | Path = "memory.db", transport: str = "stdio") -> N
 def create_v1_server(
     api_client: Any,
     host: str = "127.0.0.1",
-    port: int = 8000,
+    port: int = 8001,
     token_verifier: TokenVerifier | None = None,
 ) -> FastMCP:
     """Create the HTTP-backed MCP surface used by deployed Codex clients."""
     auth = None
     if token_verifier is not None:
         auth = AuthSettings(
-            issuer_url="http://127.0.0.1:8001",
-            resource_server_url="http://127.0.0.1:8001/mcp",
+            issuer_url=f"http://127.0.0.1:{port}",
+            resource_server_url=f"http://127.0.0.1:{port}/mcp",
             required_scopes=MCP_REQUIRED_SCOPES,
         )
     server = FastMCP(

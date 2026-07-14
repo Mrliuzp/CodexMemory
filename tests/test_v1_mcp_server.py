@@ -49,19 +49,45 @@ def test_retrieve_memory_calls_v1_search_endpoint() -> None:
     assert result["path"] == "/api/v1/search"
 
 
-def test_append_message_calls_v1_append_endpoint() -> None:
+def test_append_message_maps_all_fields_to_v1_append_payload() -> None:
     from codex_memory.mcp_server import create_v1_server
 
     client = FakeApiClient()
     result = _tool(create_v1_server(client), "append_message")(
         project="erp",
-        session="s1",
-        event="codex:erp:s1:t1:user",
-        role="user",
-        content="change order",
+        session="session-42",
+        event="codex:erp:session-42:t7:assistant",
+        role="assistant",
+        content="preserve every mapped field",
+        occurred_at="2026-07-15T09:08:07+08:00",
+        source="codex-desktop",
+        metadata={"trace_id": "trace-42", "review": True},
     )
 
     assert result["path"] == "/api/v1/append"
-    assert result["payload"]["project_key"] == "erp"
-    assert result["payload"]["event_key"] == "codex:erp:s1:t1:user"
-    assert result["payload"]["source"] == "skill"
+    assert result["payload"] == {
+        "project_key": "erp",
+        "session_key": "session-42",
+        "event_key": "codex:erp:session-42:t7:assistant",
+        "role": "assistant",
+        "content": "preserve every mapped field",
+        "occurred_at": "2026-07-15T09:08:07+08:00",
+        "source": "codex-desktop",
+        "metadata": {"trace_id": "trace-42", "review": True},
+    }
+
+def test_v1_server_uses_default_port_and_port_in_resource_url() -> None:
+    from codex_memory.mcp_auth import StaticTokenVerifier
+    from codex_memory.mcp_server import create_v1_server
+
+    default_server = create_v1_server(FakeApiClient(), token_verifier=StaticTokenVerifier("token"))
+    custom_server = create_v1_server(
+        FakeApiClient(),
+        port=8123,
+        token_verifier=StaticTokenVerifier("token"),
+    )
+
+    assert default_server.settings.port == 8001
+    assert str(default_server.settings.auth.resource_server_url) == "http://127.0.0.1:8001/mcp"
+    assert custom_server.settings.port == 8123
+    assert str(custom_server.settings.auth.resource_server_url) == "http://127.0.0.1:8123/mcp"
