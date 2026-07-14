@@ -22,3 +22,12 @@ def test_env_example_uses_placeholders_not_real_tokens() -> None:
 
     assert "CODEX_MEMORY_DATABASE_URL=" in env_example
     assert "CODEX_MEMORY_SERVICE_TOKEN=change-me" in env_example
+    assert "CODEX_MEMORY_MCP_TOKEN=change-me-mcp-token" in env_example
+
+
+def test_mcp_service_receives_independent_api_and_mcp_tokens() -> None:
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    mcp_service = compose.split("\n  mcp:\n", maxsplit=1)[1].split("\n  worker:\n", maxsplit=1)[0]
+
+    assert "CODEX_MEMORY_API_TOKEN: ${CODEX_MEMORY_SERVICE_TOKEN}" in mcp_service
+    assert "CODEX_MEMORY_MCP_TOKEN: ${CODEX_MEMORY_MCP_TOKEN}" in mcp_service

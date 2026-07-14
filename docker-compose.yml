@@ -50,6 +50,7 @@ services:
     environment:
       CODEX_MEMORY_API_URL: http://api:8000
       CODEX_MEMORY_API_TOKEN: ${CODEX_MEMORY_SERVICE_TOKEN}
+      CODEX_MEMORY_MCP_TOKEN: ${CODEX_MEMORY_MCP_TOKEN}
     ports:
       - "8001:8001"
     depends_on:
