@@ -103,7 +103,7 @@ def test_required_rejects_invalid_identifier(
     ), f"{setting}={value}")
     write_agents(tmp_path, settings)
 
-    with pytest.raises(ProjectConfigError, match=setting):
+    with pytest.raises(ProjectConfigError, match=rf"{setting} 格式无效"):
         load_project_memory_config(tmp_path)
 
 
@@ -132,5 +132,5 @@ def test_duplicate_settings_with_conflicting_values_are_rejected(tmp_path: Path)
         enabled_settings() + "CODEX_MEMORY_PROJECT_ID=warehouse\n",
     )
 
-    with pytest.raises(ProjectConfigError, match="CODEX_MEMORY_PROJECT_ID"):
+    with pytest.raises(ProjectConfigError, match="参数 CODEX_MEMORY_PROJECT_ID 的值冲突"):
         load_project_memory_config(tmp_path)

@@ -42,9 +42,9 @@ def load_project_memory_config(cwd: str | Path) -> ProjectMemoryConfig:
     project_id = values.get("CODEX_MEMORY_PROJECT_ID", "")
     mcp_server = values.get("CODEX_MEMORY_MCP_SERVER", "")
     if not PROJECT_ID_PATTERN.fullmatch(project_id):
-        raise ProjectConfigError("CODEX_MEMORY_PROJECT_ID format is invalid")
+        raise ProjectConfigError("CODEX_MEMORY_PROJECT_ID 格式无效")
     if not PROJECT_ID_PATTERN.fullmatch(mcp_server):
-        raise ProjectConfigError("CODEX_MEMORY_MCP_SERVER format is invalid")
+        raise ProjectConfigError("CODEX_MEMORY_MCP_SERVER 格式无效")
     return ProjectMemoryConfig(True, project_id, mcp_server, agents_file)
 
 
@@ -57,6 +57,6 @@ def _parse_settings(content: str) -> dict[str, str]:
         key, value = match.groups()
         previous_value = values.get(key)
         if previous_value is not None and previous_value != value:
-            raise ProjectConfigError(f"Conflicting values for {key}")
+            raise ProjectConfigError(f"参数 {key} 的值冲突")
         values[key] = value
     return values
