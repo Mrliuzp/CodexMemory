@@ -69,18 +69,18 @@ def test_v1_mcp_streamable_http_requires_bearer_token_for_health() -> None:
     )
     thread.start()
 
-    deadline = time.monotonic() + 5
-    while not server.started and thread.is_alive() and time.monotonic() < deadline:
-        time.sleep(0.01)
-
-    assert server.started
-    url = f"http://127.0.0.1:{port}/mcp"
-    headers = {
-        "Accept": "application/json, text/event-stream",
-        "Content-Type": "application/json",
-    }
-
     try:
+        deadline = time.monotonic() + 5
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert server.started
+        url = f"http://127.0.0.1:{port}/mcp"
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+
         with httpx.Client(timeout=5) as client:
             assert client.post(url, headers=headers, json={}).status_code == 401
             assert (

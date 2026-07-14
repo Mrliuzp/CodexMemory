@@ -163,7 +163,7 @@ async def main():
     print(payload["status"])
 
 anyio.run(main)
-"@ | ..venvScriptspython.exe -
+"@ | .\.venv\Scripts\python.exe -
 
 Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 .\.venv\Scripts\python.exe -m pytest tests/test_compose_contract.py tests/test_v1_mcp_transport.py -q
