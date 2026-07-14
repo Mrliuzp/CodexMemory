@@ -74,3 +74,13 @@ def test_mcp_service_receives_independent_api_and_mcp_tokens() -> None:
 
     assert environment["CODEX_MEMORY_API_TOKEN"] == "${CODEX_MEMORY_SERVICE_TOKEN}"
     assert environment["CODEX_MEMORY_MCP_TOKEN"] == "${CODEX_MEMORY_MCP_TOKEN}"
+
+
+def test_admin_web_build_context_excludes_local_artifacts() -> None:
+    dockerignore = Path("apps/admin-web/.dockerignore").read_text(encoding="utf-8")
+
+    ignored_paths = set(dockerignore.splitlines())
+    assert {"node_modules", "dist", ".vite", ".npm"}.issubset(ignored_paths)
+    assert "npm-debug.log*" in ignored_paths
+    assert "yarn-debug.log*" in ignored_paths
+    assert "pnpm-debug.log*" in ignored_paths

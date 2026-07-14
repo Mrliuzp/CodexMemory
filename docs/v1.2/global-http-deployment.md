@@ -128,3 +128,31 @@ docker compose up -d --force-recreate api worker mcp
 ```
 
 MCP 返回 `401` 时，通常是客户端未发送 Bearer Token、Token 已轮换，或使用了错误的 `CODEX_MEMORY_MCP_TOKEN`。MCP 返回 `403` 时，先确认客户端调用的是 `http://127.0.0.1:8001/mcp`，再检查 MCP 使用的 `CODEX_MEMORY_SERVICE_TOKEN` 能否代表已引导的服务身份。修改 Token 后同时更新 `.env`、客户端环境变量并重建 MCP；不要把 API 服务 Token 当作 MCP 客户端 Token 使用。
+
+## 验收记录
+
+**时间：** 2026-07-15
+
+**版本：** Docker Engine 29.6.1；Docker Compose v5.2.0。
+
+本次验收仅在当前 PowerShell 进程中设置数据库、服务和 MCP 的本地测试值；未写入 `.env`，也未记录 Token 或密码。MCP 自动化测试使用固定、非占位的本地测试 Token，本文不记录其值。
+
+```powershell
+$env:COMPOSE_PARALLEL_LIMIT = '1'
+# 在当前进程中设置本地测试值（值未记录）。
+docker compose up -d --build
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:8001/mcp -Method Post -ContentType 'application/json' -Body '{}' -SkipHttpErrorCheck
+Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
+.\.venv\Scripts\python.exe -m pytest tests/test_compose_contract.py tests/test_v1_mcp_transport.py -q
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+结果摘要：
+
+- 采用 `COMPOSE_PARALLEL_LIMIT=1` 的 `docker compose up -d --build` 构建成功。Docker Hub 鉴权超时后，使用 AWS 官方公共 ECR 提供的相同镜像完成本地标记；未改变 Compose 配置。
+- `admin-web`、`api`、`mcp`、`postgres` 和 `worker` 均为 Up，`api` 与 `postgres` 为 healthy。`admin-web` 仅发布 `127.0.0.1:5174`，`mcp` 仅发布 `127.0.0.1:8001`，API 没有宿主机端口。
+- `POST http://127.0.0.1:8001/mcp` 未携带 Authorization 返回 HTTP 401。
+- `GET http://127.0.0.1:5174/api/v1/health` 返回 `status=ok`、`database=ok`、`vector=ok`。
+- 焦点测试结果为 `11 passed`；全量结果为 `199 passed, 1 skipped`，并有 11 条既有弃用警告。
+- 前端构建曾因本地 `node_modules` 进入构建上下文而失败；`apps/admin-web/.dockerignore` 现排除依赖、产物和本地缓存。
