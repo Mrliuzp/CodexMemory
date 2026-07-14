@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.auth.provider import TokenVerifier
 from mcp.server.auth.settings import AuthSettings
@@ -163,6 +163,31 @@ def create_v1_server(
         return api_client.post(
             "/api/v1/memory",
             {"project_key": project, "level": "L1", "type": type, "content": content},
+        )
+
+    @server.tool()
+    def append_message(
+        project: str,
+        session: str,
+        event: str,
+        role: Literal["user", "assistant", "system"],
+        content: str,
+        occurred_at: str | None = None,
+        source: str = "skill",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return api_client.post(
+            "/api/v1/append",
+            {
+                "project_key": project,
+                "session_key": session,
+                "event_key": event,
+                "role": role,
+                "content": content,
+                "occurred_at": occurred_at,
+                "source": source,
+                "metadata": metadata or {},
+            },
         )
 
     @server.tool()

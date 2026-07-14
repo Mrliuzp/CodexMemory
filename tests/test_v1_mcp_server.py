@@ -47,3 +47,21 @@ def test_retrieve_memory_calls_v1_search_endpoint() -> None:
     result = _tool(create_v1_server(client), "retrieve_memory")(project="erp", query="order")
 
     assert result["path"] == "/api/v1/search"
+
+
+def test_append_message_calls_v1_append_endpoint() -> None:
+    from codex_memory.mcp_server import create_v1_server
+
+    client = FakeApiClient()
+    result = _tool(create_v1_server(client), "append_message")(
+        project="erp",
+        session="s1",
+        event="codex:erp:s1:t1:user",
+        role="user",
+        content="change order",
+    )
+
+    assert result["path"] == "/api/v1/append"
+    assert result["payload"]["project_key"] == "erp"
+    assert result["payload"]["event_key"] == "codex:erp:s1:t1:user"
+    assert result["payload"]["source"] == "skill"
