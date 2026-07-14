@@ -5,6 +5,7 @@ import json
 import logging
 import os
 
+from .doctor import doctor_exit_code, run_doctor
 from .http_api import create_app
 from .jobs import LayeringJobRunner, ReflectionJobRunner
 from .mcp_server import create_server as create_mcp_server
@@ -67,6 +68,10 @@ def main() -> None:
     serve.add_argument("--port", type=int, default=int(os.environ.get("CODEX_MEMORY_HTTP_PORT", "8765")))
     serve.add_argument("--reload", action="store_true")
 
+    doctor = subparsers.add_parser("doctor", help="诊断 Codex Memory 全局接入状态。")
+    doctor.add_argument("--cwd", default=os.getcwd())
+    doctor.add_argument("--json", action="store_true")
+
     mcp = subparsers.add_parser("mcp", help="Start the MCP server.")
     mcp.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
 
@@ -102,6 +107,15 @@ def main() -> None:
     subparsers.add_parser("process", help="Process all pending L0 jobs.")
 
     args = parser.parse_args()
+    if args.command == "doctor":
+        report = run_doctor(args.cwd, runtime_checks=True)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False))
+        else:
+            for message in report["messages"]:
+                print(message)
+        raise SystemExit(doctor_exit_code(report))
+
     service = MemoryService(args.db)
 
     if args.command == "append":

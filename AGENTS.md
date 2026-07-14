@@ -1,3 +1,7 @@
+CODEX_MEMORY_AUTO_LOG=required
+CODEX_MEMORY_PROJECT_ID=20260703-codex-memory-system
+CODEX_MEMORY_MCP_SERVER=codex-memory
+
 # Codex 记忆自动记录
 
 在这个仓库中，把记忆记录当作默认行为。
