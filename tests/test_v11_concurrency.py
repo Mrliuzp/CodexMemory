@@ -68,6 +68,41 @@ def test_concurrent_append_with_same_event_key_is_idempotent():
     assert len(messages) == 1, "exactly one message should survive concurrent append"
     assert count >= 1, "at least one caller should succeed"
 
+def test_concurrent_outbox_dispatch_has_no_duplicate_jobs():
+    from codex_memory.db_models import OutboxEventRow, ProcessingJobRow, ProjectRow
+    from codex_memory.v11_worker import OutboxDispatcher
+
+    factory, _ = _wal_factory()
+    with factory() as session:
+        project = ProjectRow(project_key="erp", name="ERP")
+        session.add(project)
+        session.flush()
+        session.add_all([
+            OutboxEventRow(
+                project_id=project.id,
+                aggregate_type="message",
+                aggregate_id=i,
+                event_type="message.appended.v1",
+                payload_version="v1",
+                payload={"i": i},
+            )
+            for i in range(1, 21)
+        ])
+        session.commit()
+
+    def dispatch(worker_id: str) -> int:
+        return OutboxDispatcher(factory).dispatch_once(worker_id, limit=5)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        dispatched = list(pool.map(dispatch, [f"dispatcher-{i}" for i in range(4)]))
+
+    assert sum(dispatched) == 20
+    with factory() as session:
+        jobs = session.scalars(select(ProcessingJobRow)).all()
+        events = session.scalars(select(OutboxEventRow)).all()
+    assert len(jobs) == 20
+    assert {event.status for event in events} == {"dispatched"}
+
 
 def test_concurrent_job_claim_has_no_duplicate_running():
     from codex_memory.db_models import OutboxEventRow, ProcessingJobRow, ProjectRow
