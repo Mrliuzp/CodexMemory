@@ -20,6 +20,9 @@ export function adminGet(path, params = {}) {
   return request(path, {}, params)
 }
 
+export function getSystemStatus() { return adminGet('/system/status') }
+export function getProjectArchiveStatus(projectKey) { return adminGet(/projects//archive-status) }
+
 export function adminLogin(username, password) {
   return request('/login', { method: 'POST', body: JSON.stringify({ username, password }) })
 }

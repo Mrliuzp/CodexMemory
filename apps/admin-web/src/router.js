@@ -2,6 +2,7 @@ import { createMemoryHistory, createRouter, createWebHistory } from 'vue-router'
 import DashboardView from './views/DashboardView.vue'
 import ProjectsView from './views/ProjectsView.vue'
 import RecordsView from './views/RecordsView.vue'
+import SystemStatusView from './views/SystemStatusView.vue'
 import LoginView from './views/LoginView.vue'
 
 export const routes = [
@@ -10,6 +11,7 @@ export const routes = [
   { path: '/dashboard', component: DashboardView, meta: { requiresAuth: true, label: '运行概览' } },
   { path: '/projects', component: ProjectsView, meta: { requiresAuth: true, label: '项目与作用域' } },
   { path: '/record', redirect: (to) => ({ path: '/records', query: to.query }), meta: { requiresAuth: true } },
+  { path: '/system-status', component: SystemStatusView, meta: { requiresAuth: true, label: 'System Status' } },
   { path: '/records', component: RecordsView, meta: { requiresAuth: true, label: '只读数据' } },
 ]
 
