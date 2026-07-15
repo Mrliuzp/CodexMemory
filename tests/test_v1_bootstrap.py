@@ -9,7 +9,7 @@ def test_bootstrap_creates_project_and_api_key_idempotently() -> None:
     from sqlalchemy import select
 
     from codex_memory.auth import hash_token
-    from codex_memory.bootstrap import ensure_bootstrap
+    from codex_memory.bootstrap import BOOTSTRAP_PERMISSIONS, ensure_bootstrap
     from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
     from codex_memory.db_models import ApiKeyRow, ProjectRow
 
@@ -25,7 +25,7 @@ def test_bootstrap_creates_project_and_api_key_idempotently() -> None:
         keys = session.scalars(select(ApiKeyRow)).all()
         assert len(keys) == 1
         assert keys[0].token_hash == hash_token("secret")
-        assert keys[0].permissions == ["append", "read", "memory_write"]
+        assert keys[0].permissions == BOOTSTRAP_PERMISSIONS
 
 
 def test_bootstrap_rejects_placeholder_token() -> None:
@@ -62,3 +62,26 @@ def test_bootstrap_rejects_service_token_from_env_example_without_writing_keys()
     with factory() as session:
         assert session.scalars(select(ProjectRow)).all() == []
         assert session.scalars(select(ApiKeyRow)).all() == []
+
+
+def test_bootstrap_upgrades_existing_service_token_permissions() -> None:
+    from sqlalchemy import select
+
+    from codex_memory.bootstrap import BOOTSTRAP_PERMISSIONS, ensure_bootstrap
+    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db_models import ApiKeyRow
+
+    engine = create_sqlite_engine()
+    create_schema(engine)
+    factory = create_session_factory(engine)
+    ensure_bootstrap(factory, "demo", "secret", "Demo")
+    with factory() as session:
+        key = session.scalar(select(ApiKeyRow))
+        key.permissions = ["append", "read", "memory_write"]
+        session.commit()
+
+    ensure_bootstrap(factory, "demo", "secret", "Demo")
+
+    with factory() as session:
+        assert session.scalar(select(ApiKeyRow)).permissions == BOOTSTRAP_PERMISSIONS
+        assert "operations_read" in BOOTSTRAP_PERMISSIONS

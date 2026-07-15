@@ -32,6 +32,11 @@ def _app() -> TestClient:
                     token_hash=hashlib.sha256(b"project-a-admin").hexdigest(),
                     permissions=["read", "admin"],
                 ),
+                ApiKeyRow(
+                    project_id=project_a.id,
+                    token_hash=hashlib.sha256(b"project-a-operations").hexdigest(),
+                    permissions=["read", "operations_read"],
+                ),
             ]
         )
         session.commit()
@@ -72,3 +77,11 @@ def test_system_status_redacts_sensitive_values() -> None:
     assert response.json()["request_id"]
     assert "project-a-admin" not in response.text
     assert "postgresql+psycopg" not in response.text
+
+def test_system_status_allows_only_the_dedicated_operations_permission() -> None:
+    client = _app()
+
+    response = client.get("/api/admin/v1/system/status", headers=_auth("project-a-operations"))
+
+    assert response.status_code == 200
+    assert response.json()["data"]["migration_schema"] == "ok"

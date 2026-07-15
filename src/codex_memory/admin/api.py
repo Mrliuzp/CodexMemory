@@ -243,12 +243,10 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
 
     @router.get("/system/status")
     def system_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
-        try:
-            require_permission(current, "admin")
-        except PermissionDenied as error:
+        if not ({"admin", "operations_read"} & set(current.permissions)):
+            error = PermissionDenied("缺少运行状态读取权限")
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         return {"data": _redact(OperationsService(session_factory).system_status()), "meta": {}, "request_id": _request_id(request)}
-
     @router.get("/projects/{project_key}/archive-status")
     def archive_status(project_key: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         project_context(request, project_key, None, current)
