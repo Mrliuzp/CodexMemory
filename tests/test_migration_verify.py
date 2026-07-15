@@ -23,3 +23,30 @@ def test_verification_reports_counts_and_fingerprints(tmp_path: Path) -> None:
     assert verification.counts_match is True
     assert verification.duplicate_fingerprints == 0
     assert verification.ready_to_cutover is True
+
+
+def test_verify_migration_cli_outputs_cutover_report(tmp_path: Path, monkeypatch, capsys) -> None:
+    from codex_memory.cli import main
+    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db_models import ProjectRow
+    from codex_memory.migration_import import MigrationImporter
+
+    source = tmp_path / "legacy.db"
+    target = tmp_path / "target.db"
+    _legacy(source)
+    engine = create_sqlite_engine(f"sqlite:///{target}")
+    create_schema(engine)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        session.add(ProjectRow(project_key="erp", name="ERP"))
+        session.commit()
+    batch = MigrationImporter(factory).import_batch(source, {"legacy": "erp"})
+
+    monkeypatch.setattr("sys.argv", ["codex-memory", "--db", str(target), "verify-migration", "--source", str(source), "--batch-id", str(batch.batch_id)])
+    main()
+
+    import json
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["ready_to_cutover"] is True
+    assert output["counts_match"] is True

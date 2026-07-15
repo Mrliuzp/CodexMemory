@@ -15,6 +15,7 @@ from .jobs import LayeringJobRunner, ReflectionJobRunner
 from .migration_backup import backup_sqlite
 from .migration_inventory import inventory_source
 from .migration_import import MigrationImporter
+from .migration_verify import verify_migration
 from .mcp_server import create_server as create_mcp_server
 from .models import Layer
 from .project_config import ProjectConfigError
@@ -101,6 +102,10 @@ def main() -> None:
     migrate_mode.add_argument("--dry-run", action="store_true")
     migrate_mode.add_argument("--apply", action="store_true")
 
+    verify_migration_parser = subparsers.add_parser("verify-migration", help="Verify a completed legacy migration.")
+    verify_migration_parser.add_argument("--source", required=True)
+    verify_migration_parser.add_argument("--batch-id", type=int, required=True)
+
     mcp = subparsers.add_parser("mcp", help="Start the MCP server.")
     mcp.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
 
@@ -181,6 +186,11 @@ def main() -> None:
         create_schema(engine)
         report = MigrationImporter(create_session_factory(engine)).import_batch(args.source, project_map)
         print(json.dumps({"batch_id": report.batch_id, "messages": report.messages.__dict__, "sessions": report.sessions.__dict__, "issues": report.issues.by_code}, ensure_ascii=False))
+        return
+    if args.command == "verify-migration":
+        engine = create_sqlite_engine(f"sqlite:///{args.db}")
+        report = verify_migration(args.source, create_session_factory(engine), args.batch_id)
+        print(json.dumps(report.to_dict(), ensure_ascii=False))
         return
     if args.command == "doctor":
         report = run_doctor(args.cwd, runtime_checks=True)
