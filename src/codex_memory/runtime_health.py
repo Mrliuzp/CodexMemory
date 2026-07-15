@@ -4,7 +4,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 
-EXPECTED_SCHEMA_REVISION = "0012_global_http_operations"
+EXPECTED_SCHEMA_REVISION = "0013_legacy_memory_fingerprints"
 
 
 def _schema_status(session: Session) -> str:

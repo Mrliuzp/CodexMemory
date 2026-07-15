@@ -72,6 +72,7 @@ class MessageRow(Base):
 
 class MemoryRow(TimestampedRow, Base):
     __tablename__ = "memories"
+    __table_args__ = (Index("uq_memories_source_fingerprint", "source_fingerprint", unique=True),)
 
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
@@ -87,6 +88,7 @@ class MemoryRow(TimestampedRow, Base):
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="project", server_default="project")
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="rule", server_default="rule")
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="accepted", server_default="accepted")
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class MemoryEmbeddingRow(Base):
@@ -121,12 +123,14 @@ class MemoryRelationRow(Base):
 
 class MemoryVersionRow(Base):
     __tablename__ = "memory_versions"
+    __table_args__ = (Index("uq_memory_versions_source_fingerprint", "source_fingerprint", unique=True),)
 
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     memory_id: Mapped[int] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ApiKeyRow(Base):

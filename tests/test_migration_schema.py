@@ -34,3 +34,15 @@ def test_archive_status_is_unique_per_project() -> None:
 
     constraints = inspect(engine).get_unique_constraints("archive_status")
     assert any(item["column_names"] == ["project_id"] for item in constraints)
+
+
+def test_memory_and_version_source_fingerprints_are_unique() -> None:
+    from codex_memory.db import create_schema, create_sqlite_engine
+
+    engine = create_sqlite_engine()
+    create_schema(engine)
+
+    memory_indexes = inspect(engine).get_indexes("memories")
+    version_indexes = inspect(engine).get_indexes("memory_versions")
+    assert any(item["unique"] and item["column_names"] == ["source_fingerprint"] for item in memory_indexes)
+    assert any(item["unique"] and item["column_names"] == ["source_fingerprint"] for item in version_indexes)
