@@ -7,7 +7,7 @@ import os
 import sys
 
 from .codex_hooks import handle_assistant_stop, handle_user_prompt, replay_outbox
-from .db import create_schema, create_session_factory, create_sqlite_engine
+from .db import create_engine_from_url, create_schema, create_session_factory, create_sqlite_engine
 from .doctor import doctor_exit_code, run_doctor
 from .hook_client import PermanentHookError
 from .http_api import create_app
@@ -19,12 +19,14 @@ from .migration_verify import verify_migration
 from .mcp_server import create_server as create_mcp_server
 from .models import Layer
 from .project_config import ProjectConfigError
+from .runtime_health import build_readiness
 from .service import MemoryService
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="codex-memory")
     parser.add_argument("--db", default="memory.db")
+    parser.add_argument("--database-url", help="迁移与校验使用的既有目标数据库 URL。")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     append = subparsers.add_parser("append", help="Append one raw L0 conversation message.")
@@ -189,14 +191,12 @@ def main() -> None:
             verify_backup_manifest(args.source, args.backup_manifest)
         except BackupManifestError as error:
             raise SystemExit(f"backup manifest verification failed: {error}") from error
-        engine = create_sqlite_engine(f"sqlite:///{args.db}")
-        create_schema(engine)
-        report = MigrationImporter(create_session_factory(engine)).import_batch(args.source, project_map)
+        session_factory = _migration_target_session_factory(args)
+        report = MigrationImporter(session_factory).import_batch(args.source, project_map)
         print(json.dumps({"batch_id": report.batch_id, "messages": report.messages.__dict__, "sessions": report.sessions.__dict__, "issues": report.issues.by_code}, ensure_ascii=False))
         return
     if args.command == "verify-migration":
-        engine = create_sqlite_engine(f"sqlite:///{args.db}")
-        report = verify_migration(args.source, create_session_factory(engine), args.batch_id)
+        report = verify_migration(args.source, _migration_target_session_factory(args), args.batch_id)
         print(json.dumps(report.to_dict(), ensure_ascii=False))
         return
     if args.command == "doctor":
@@ -382,6 +382,19 @@ def main() -> None:
         print(json.dumps({"created": service.process_pending_memories()}, ensure_ascii=False))
         return
 
+
+
+def _migration_target_session_factory(args: argparse.Namespace):
+    if args.database_url:
+        engine = create_engine_from_url(args.database_url)
+        if engine.dialect.name == "postgresql":
+            readiness = build_readiness(create_session_factory(engine))
+            if readiness["status"] != "ok":
+                raise SystemExit("PostgreSQL target is not ready for migration")
+        return create_session_factory(engine)
+    engine = create_sqlite_engine(f"sqlite:///{args.db}")
+    create_schema(engine)
+    return create_session_factory(engine)
 
 def parse_layer(value: str) -> Layer:
     return Layer(value.upper())

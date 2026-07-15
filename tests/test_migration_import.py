@@ -102,3 +102,59 @@ def test_migrate_cli_apply_accepts_matching_backup_manifest(tmp_path: Path, monk
     main()
 
     assert json.loads(capsys.readouterr().out)["messages"]["created"] == 2
+
+def test_migrate_cli_uses_explicit_database_url_without_initializing_schema(tmp_path: Path, monkeypatch, capsys) -> None:
+    import json
+
+    from codex_memory.cli import main
+    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db_models import ProjectRow
+    from codex_memory.migration_backup import backup_sqlite
+
+    source = tmp_path / "legacy.db"
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "target.db"
+    _legacy(source)
+    result = backup_sqlite(source, backup)
+    engine = create_sqlite_engine(f"sqlite:///{target}")
+    create_schema(engine)
+    with create_session_factory(engine)() as session:
+        session.add(ProjectRow(project_key="erp", name="ERP"))
+        session.commit()
+    monkeypatch.setattr("codex_memory.cli.create_schema", lambda _engine: (_ for _ in ()).throw(AssertionError("must not initialize explicit target")))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "codex-memory",
+            "--database-url",
+            f"sqlite+pysqlite:///{target}",
+            "migrate",
+            "--source",
+            str(backup),
+            "--project-map",
+            '{"legacy-project":"erp"}',
+            "--backup-manifest",
+            str(result.manifest_path),
+            "--apply",
+        ],
+    )
+
+    main()
+
+    assert json.loads(capsys.readouterr().out)["messages"]["created"] == 2
+
+def test_postgresql_target_must_be_ready_before_import(monkeypatch) -> None:
+    import argparse
+
+    from codex_memory.cli import _migration_target_session_factory
+
+    class FakeEngine:
+        class dialect:
+            name = "postgresql"
+
+    monkeypatch.setattr("codex_memory.cli.create_engine_from_url", lambda _url: FakeEngine())
+    monkeypatch.setattr("codex_memory.cli.create_session_factory", lambda _engine: object())
+    monkeypatch.setattr("codex_memory.cli.build_readiness", lambda _factory: {"status": "degraded"})
+
+    with pytest.raises(SystemExit, match="not ready"):
+        _migration_target_session_factory(argparse.Namespace(database_url="postgresql+psycopg://example"))
