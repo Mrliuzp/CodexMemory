@@ -33,6 +33,19 @@ def run_v11_once(session_factory: sessionmaker[Session], worker_id: str = "v11-w
     processed = worker.process_once(worker_id, V11JobHandlers(session_factory).handle)
     return {"dispatched": dispatched, **processed}
 
+
+
+def run_worker_iteration(
+    session_factory: sessionmaker[Session],
+    *,
+    worker_id: str = "v11-worker",
+    include_reflection: bool = False,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {"v11": run_v11_once(session_factory, worker_id)}
+    if include_reflection:
+        report["reflection"] = run_once(session_factory)
+    return report
+
 def seconds_until_schedule(schedule: str, now: datetime | None = None) -> float:
     """Return the delay until the next local daily HH:MM execution window."""
     try:
@@ -54,16 +67,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="codex-memory-worker")
     parser.add_argument("--schedule", default="02:00")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--poll-interval", type=float, default=5.0)
     args = parser.parse_args()
     settings = Settings.from_env()
     factory = create_session_factory(create_engine_from_url(settings.database_url))
+    if args.poll_interval <= 0:
+        parser.error("--poll-interval must be positive")
     if args.once:
-        print(run_once(factory))
+        print(run_worker_iteration(factory, include_reflection=True))
         return
+    next_reflection = datetime.now() + timedelta(seconds=seconds_until_schedule(args.schedule))
     while True:
-        time.sleep(seconds_until_schedule(args.schedule))
-        run_once(factory)
-
+        now = datetime.now()
+        due_reflection = now >= next_reflection
+        run_worker_iteration(factory, include_reflection=due_reflection)
+        if due_reflection:
+            next_reflection = now + timedelta(seconds=seconds_until_schedule(args.schedule, now))
+        delay = min(args.poll_interval, max(0.0, (next_reflection - datetime.now()).total_seconds()))
+        time.sleep(delay)
 
 if __name__ == "__main__":
     main()
