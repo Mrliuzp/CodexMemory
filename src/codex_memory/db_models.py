@@ -49,7 +49,10 @@ class SessionRow(Base):
 
 class MessageRow(Base):
     __tablename__ = "messages"
-    __table_args__ = (Index("uq_messages_project_event_key", "project_id", "event_key", unique=True),)
+    __table_args__ = (
+        Index("uq_messages_project_event_key", "project_id", "event_key", unique=True),
+        Index("uq_messages_project_source_fingerprint", "project_id", "source_fingerprint", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -59,6 +62,7 @@ class MessageRow(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False, default="hook")
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -165,3 +169,41 @@ from .v11_models import (
     RetrievalAuditRow,
     SecurityAuditRow,
 )
+
+
+class MigrationBatchRow(TimestampedRow, Base):
+    __tablename__ = "migration_batches"
+
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    source_path_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="inventory")
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    report: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class MigrationIssueRow(TimestampedRow, Base):
+    __tablename__ = "migration_issues"
+
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("migration_batches.id", ondelete="RESTRICT"), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="error")
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class ArchiveStatusRow(TimestampedRow, Base):
+    __tablename__ = "archive_status"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_archive_status_project"),)
+
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    last_user_archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_assistant_archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failure_summary: Mapped[str | None] = mapped_column(String(300))
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dead_letter_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
