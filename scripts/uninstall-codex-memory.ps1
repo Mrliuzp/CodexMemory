@@ -63,3 +63,7 @@ if ($RemoveToken) {
     [Environment]::SetEnvironmentVariable("CODEX_MEMORY_MCP_TOKEN", $null, "User")
 }
 Write-Host "Codex Memory 已卸载。"
+if ($RemoveToken) {
+    [Environment]::SetEnvironmentVariable("CODEX_MEMORY_API_TOKEN", $null, "User")
+    Write-Host "已删除当前用户的 CODEX_MEMORY_API_TOKEN。"
+}
