@@ -193,7 +193,7 @@ def main() -> None:
             raise SystemExit(f"backup manifest verification failed: {error}") from error
         session_factory = _migration_target_session_factory(args)
         report = MigrationImporter(session_factory).import_batch(args.source, project_map)
-        print(json.dumps({"batch_id": report.batch_id, "messages": report.messages.__dict__, "sessions": report.sessions.__dict__, "issues": report.issues.by_code}, ensure_ascii=False))
+        print(json.dumps({"batch_id": report.batch_id, "messages": report.messages.__dict__, "sessions": report.sessions.__dict__, "memories": report.memories.__dict__, "memory_versions": report.memory_versions.__dict__, "memory_sources": report.memory_sources.__dict__, "issues": report.issues.by_code}, ensure_ascii=False))
         return
     if args.command == "verify-migration":
         report = verify_migration(args.source, _migration_target_session_factory(args), args.batch_id)

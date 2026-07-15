@@ -158,3 +158,49 @@ def test_postgresql_target_must_be_ready_before_import(monkeypatch) -> None:
 
     with pytest.raises(SystemExit, match="not ready"):
         _migration_target_session_factory(argparse.Namespace(database_url="postgresql+psycopg://example"))
+
+def test_imports_legacy_memories_versions_and_message_sources_idempotently(tmp_path: Path) -> None:
+    from sqlalchemy import select
+
+    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db_models import MemoryRow, MemorySourceRow, MemoryVersionRow, ProjectRow
+    from codex_memory.migration_import import MigrationImporter
+    from codex_memory.migration_verify import verify_migration
+
+    source = tmp_path / "legacy-full.db"
+    with sqlite3.connect(source) as legacy:
+        legacy.executescript(
+            """
+            CREATE TABLE raw_logs(id INTEGER PRIMARY KEY, project_id TEXT, conversation_id TEXT, role TEXT, content TEXT, metadata_json TEXT);
+            CREATE TABLE memories(id INTEGER PRIMARY KEY, project_id TEXT, layer TEXT, title TEXT, body TEXT, tags_json TEXT, memory_type TEXT, source_log_ids_json TEXT, metadata_json TEXT, version INTEGER, weight REAL, access_count INTEGER);
+            CREATE TABLE memory_versions(id INTEGER PRIMARY KEY, memory_id INTEGER, version INTEGER, title TEXT, body TEXT, tags_json TEXT, source_log_ids_json TEXT, metadata_json TEXT);
+            """
+        )
+        legacy.execute("INSERT INTO raw_logs VALUES (1, 'legacy-project', 'conversation-1', 'user', 'original question', '{}')")
+        legacy.execute("INSERT INTO memories VALUES (10, 'legacy-project', 'L1', '缓存规则', '更新缓存键', '[\"cache\"]', 'rule', '[1]', '{\"module\":\"cache\"}', 1, 0.8, 4)")
+        legacy.execute("INSERT INTO memory_versions VALUES (11, 10, 1, '缓存规则', '更新缓存键', '[\"cache\"]', '[1]', '{\"module\":\"cache\"}')")
+
+    engine = create_sqlite_engine()
+    create_schema(engine)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        session.add(ProjectRow(project_key="erp", name="ERP"))
+        session.commit()
+
+    first = MigrationImporter(factory).import_batch(source, {"legacy-project": "erp"})
+    second = MigrationImporter(factory).import_batch(source, {"legacy-project": "erp"})
+
+    assert first.memories.created == 1
+    assert first.memory_versions.created == 1
+    assert first.memory_sources.created == 1
+    assert second.memories.duplicates == 1
+    verification = verify_migration(source, factory, first.batch_id)
+    assert verification.memory_counts_match is True
+    assert verification.version_counts_match is True
+    assert verification.broken_memory_sources == 0
+    with factory() as session:
+        memory = session.scalar(select(MemoryRow))
+        assert memory is not None
+        assert memory.content["text"] == "更新缓存键"
+        assert session.scalar(select(MemoryVersionRow).where(MemoryVersionRow.memory_id == memory.id)) is not None
+        assert session.scalar(select(MemorySourceRow).where(MemorySourceRow.memory_id == memory.id)) is not None
