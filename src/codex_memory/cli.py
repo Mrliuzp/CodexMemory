@@ -11,6 +11,8 @@ from .doctor import doctor_exit_code, run_doctor
 from .hook_client import PermanentHookError
 from .http_api import create_app
 from .jobs import LayeringJobRunner, ReflectionJobRunner
+from .migration_backup import backup_sqlite
+from .migration_inventory import inventory_source
 from .mcp_server import create_server as create_mcp_server
 from .models import Layer
 from .project_config import ProjectConfigError
@@ -83,6 +85,13 @@ def main() -> None:
     replay_scope.add_argument("--project")
     replay_scope.add_argument("--all", action="store_true")
 
+    inventory = subparsers.add_parser("inventory", help="Inventory a legacy SQLite source.")
+    inventory.add_argument("--source", required=True)
+    inventory.add_argument("--json", action="store_true")
+    backup = subparsers.add_parser("backup", help="Create a consistent SQLite backup.")
+    backup.add_argument("--source", required=True)
+    backup.add_argument("--destination", required=True)
+
     mcp = subparsers.add_parser("mcp", help="Start the MCP server.")
     mcp.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
 
@@ -143,6 +152,14 @@ def main() -> None:
             print(f"\u91cd\u653e\u961f\u5217\u5931\u8d25\uff1a{error}", file=sys.stderr)
             raise SystemExit(2) from error
         print(json.dumps(report.to_dict(), ensure_ascii=False))
+        return
+    if args.command == "inventory":
+        payload = inventory_source(args.source).public_dict()
+        print(json.dumps(payload, ensure_ascii=False, indent=2 if not args.json else None))
+        return
+    if args.command == "backup":
+        result = backup_sqlite(args.source, args.destination)
+        print(json.dumps({"source_sha256": result.source_sha256, "sha256": result.sha256, "destination": str(result.destination)}, ensure_ascii=False))
         return
     if args.command == "doctor":
         report = run_doctor(args.cwd, runtime_checks=True)
