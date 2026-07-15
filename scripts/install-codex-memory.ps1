@@ -54,7 +54,15 @@ if (-not (Test-Path -LiteralPath $CodexCli)) {
 }
 
 New-Item -ItemType Directory -Force -Path $CodexHome, (Join-Path $CodexHome "skills") | Out-Null
-& py -3 -m venv $Runtime
+$PythonLauncher = Get-Command py -ErrorAction SilentlyContinue
+$PythonExecutable = Get-Command python -ErrorAction SilentlyContinue
+if ($null -ne $PythonLauncher) {
+    & $PythonLauncher.Source -3 -m venv $Runtime
+} elseif ($null -ne $PythonExecutable) {
+    & $PythonExecutable.Source -m venv $Runtime
+} else {
+    throw "未找到 Python 解释器。请先安装 Python 3.10 或更高版本。"
+}
 if ($LASTEXITCODE -ne 0) { throw "创建 Codex Memory 运行环境失败" }
 & (Join-Path $Runtime "Scripts\python.exe") -m pip install --upgrade $RepoRoot
 if ($LASTEXITCODE -ne 0) { throw "安装 Codex Memory 运行环境依赖失败" }
