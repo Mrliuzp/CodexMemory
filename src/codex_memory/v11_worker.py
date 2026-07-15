@@ -21,7 +21,11 @@ class JobClaim:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 def _begin_locking_transaction(session: Session) -> str:
     dialect = session.bind.dialect.name if session.bind is not None else ""
@@ -158,7 +162,7 @@ class V11JobWorker:
             job = session.get(ProcessingJobRow, job_id)
             if job is None or job.status != "running" or job.locked_by != worker_id:
                 return False
-            if job.lease_expires_at is not None and job.lease_expires_at <= now:
+            if job.lease_expires_at is not None and _as_utc(job.lease_expires_at) <= _as_utc(now):
                 return False
             job.heartbeat_at = now
             job.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
@@ -311,5 +315,5 @@ class V11JobWorker:
             job is not None
             and job.status == "running"
             and job.locked_by == worker_id
-            and (job.lease_expires_at is None or job.lease_expires_at > now)
+            and (job.lease_expires_at is None or _as_utc(job.lease_expires_at) > _as_utc(now))
         )

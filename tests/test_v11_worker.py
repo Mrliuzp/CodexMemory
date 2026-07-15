@@ -175,3 +175,17 @@ def test_retryable_failure_backoffs_and_dead_jobs_stop_claiming() -> None:
     claim = worker.claim_jobs("worker-c")[0]
     assert worker.fail(claim.job_id, "worker-c", "timeout", "remote timeout", retryable=True) == "dead"
     assert worker.claim_jobs("worker-d") == []
+
+def test_worker_lease_check_accepts_postgresql_aware_timestamps() -> None:
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from codex_memory.v11_worker import V11JobWorker
+
+    job = SimpleNamespace(
+        status="running",
+        locked_by="worker-a",
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+    )
+
+    assert V11JobWorker._owns_live_job(job, "worker-a", datetime.now(timezone.utc).replace(tzinfo=None)) is True
