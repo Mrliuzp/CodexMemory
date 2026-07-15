@@ -12,7 +12,7 @@ from .doctor import doctor_exit_code, run_doctor
 from .hook_client import PermanentHookError
 from .http_api import create_app
 from .jobs import LayeringJobRunner, ReflectionJobRunner
-from .migration_backup import backup_sqlite
+from .migration_backup import BackupManifestError, backup_sqlite, verify_backup_manifest
 from .migration_inventory import inventory_source
 from .migration_import import MigrationImporter
 from .migration_verify import verify_migration
@@ -98,6 +98,7 @@ def main() -> None:
     migrate = subparsers.add_parser("migrate", help="Import a legacy SQLite backup.")
     migrate.add_argument("--source", required=True)
     migrate.add_argument("--project-map", required=True)
+    migrate.add_argument("--backup-manifest")
     migrate_mode = migrate.add_mutually_exclusive_group(required=True)
     migrate_mode.add_argument("--dry-run", action="store_true")
     migrate_mode.add_argument("--apply", action="store_true")
@@ -173,7 +174,7 @@ def main() -> None:
         return
     if args.command == "backup":
         result = backup_sqlite(args.source, args.destination)
-        print(json.dumps({"source_sha256": result.source_sha256, "sha256": result.sha256, "destination": str(result.destination)}, ensure_ascii=False))
+        print(json.dumps({"source_sha256": result.source_sha256, "sha256": result.sha256, "destination": str(result.destination), "manifest": str(result.manifest_path)}, ensure_ascii=False))
         return
     if args.command == "migrate":
         project_map = json.loads(args.project_map)
@@ -182,6 +183,12 @@ def main() -> None:
         if args.dry_run:
             print(json.dumps({"dry_run": True, "manifest": inventory_source(args.source).public_dict()}, ensure_ascii=False))
             return
+        if not args.backup_manifest:
+            raise SystemExit("--apply requires a verified --backup-manifest")
+        try:
+            verify_backup_manifest(args.source, args.backup_manifest)
+        except BackupManifestError as error:
+            raise SystemExit(f"backup manifest verification failed: {error}") from error
         engine = create_sqlite_engine(f"sqlite:///{args.db}")
         create_schema(engine)
         report = MigrationImporter(create_session_factory(engine)).import_batch(args.source, project_map)
