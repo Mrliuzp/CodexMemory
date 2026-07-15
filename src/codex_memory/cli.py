@@ -4,12 +4,16 @@ import argparse
 import json
 import logging
 import os
+import sys
 
+from .codex_hooks import handle_assistant_stop, handle_user_prompt, replay_outbox
 from .doctor import doctor_exit_code, run_doctor
+from .hook_client import PermanentHookError
 from .http_api import create_app
 from .jobs import LayeringJobRunner, ReflectionJobRunner
 from .mcp_server import create_server as create_mcp_server
 from .models import Layer
+from .project_config import ProjectConfigError
 from .service import MemoryService
 
 
@@ -72,6 +76,13 @@ def main() -> None:
     doctor.add_argument("--cwd", default=os.getcwd())
     doctor.add_argument("--json", action="store_true")
 
+    subparsers.add_parser("hook-user", help="\u5f52\u6863 UserPromptSubmit Hook \u4e8b\u4ef6\u3002")
+    subparsers.add_parser("hook-assistant", help="\u5f52\u6863 Stop Hook \u4e8b\u4ef6\u3002")
+    replay_outbox_parser = subparsers.add_parser("replay-outbox", help="\u91cd\u653e\u672c\u5730\u5f52\u6863\u961f\u5217\u3002")
+    replay_scope = replay_outbox_parser.add_mutually_exclusive_group(required=True)
+    replay_scope.add_argument("--project")
+    replay_scope.add_argument("--all", action="store_true")
+
     mcp = subparsers.add_parser("mcp", help="Start the MCP server.")
     mcp.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
 
@@ -107,6 +118,32 @@ def main() -> None:
     subparsers.add_parser("process", help="Process all pending L0 jobs.")
 
     args = parser.parse_args()
+    if args.command in {"hook-user", "hook-assistant"}:
+        try:
+            event = json.load(sys.stdin)
+            if not isinstance(event, dict):
+                raise ValueError("Hook \u8f93\u5165\u5fc5\u987b\u662f JSON \u5bf9\u8c61")
+            if args.command == "hook-user":
+                context_text = handle_user_prompt(event)
+                if context_text:
+                    print(context_text)
+            else:
+                result = handle_assistant_stop(event)
+                if result.error:
+                    print(f"Hook \u5f52\u6863\u5931\u8d25\uff1a{result.error}", file=sys.stderr)
+                    raise SystemExit(1)
+        except (json.JSONDecodeError, ValueError, ProjectConfigError, PermanentHookError) as error:
+            print(f"Hook \u6267\u884c\u5931\u8d25\uff1a{error}", file=sys.stderr)
+            raise SystemExit(2) from error
+        return
+    if args.command == "replay-outbox":
+        try:
+            report = replay_outbox(project_id=args.project if not args.all else None)
+        except PermanentHookError as error:
+            print(f"\u91cd\u653e\u961f\u5217\u5931\u8d25\uff1a{error}", file=sys.stderr)
+            raise SystemExit(2) from error
+        print(json.dumps(report.to_dict(), ensure_ascii=False))
+        return
     if args.command == "doctor":
         report = run_doctor(args.cwd, runtime_checks=True)
         if args.json:
