@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -28,7 +29,9 @@ def verify_migration(source: str | Path, session_factory: sessionmaker[Session],
     if batch_id is None:
         raise ValueError("migration batch is required")
     manifest = inventory_source(source)
-    with sqlite3.connect(Path(source)) as legacy:
+    source_path = Path(source).resolve()
+    uri = f"file:{quote(source_path.as_posix())}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as legacy:
         raw_ids = [str(row[0]) for row in legacy.execute("SELECT id FROM raw_logs")]
     fingerprints = [source_fingerprint(manifest.sha256, "raw_logs", value) for value in raw_ids]
     with session_factory() as session:

@@ -50,3 +50,33 @@ def test_verify_migration_cli_outputs_cutover_report(tmp_path: Path, monkeypatch
     output = json.loads(capsys.readouterr().out)
     assert output["ready_to_cutover"] is True
     assert output["counts_match"] is True
+
+def test_verification_opens_source_read_only(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+
+    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db_models import ProjectRow
+    from codex_memory.migration_import import MigrationImporter
+    from codex_memory.migration_verify import verify_migration
+
+    source = tmp_path / "legacy.db"
+    _legacy(source)
+    engine = create_sqlite_engine()
+    create_schema(engine)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        session.add(ProjectRow(project_key="erp", name="ERP"))
+        session.commit()
+    batch = MigrationImporter(factory).import_batch(source, {"legacy": "erp"})
+    original_connect = sqlite3.connect
+    calls: list[tuple[object, dict]] = []
+
+    def track_connect(database, *args, **kwargs):
+        calls.append((database, kwargs))
+        return original_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", track_connect)
+    verify_migration(source, factory, batch.batch_id)
+
+    assert calls
+    assert all(str(database).startswith("file:") and kwargs.get("uri") is True for database, kwargs in calls)
