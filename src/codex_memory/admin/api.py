@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..auth import PermissionDenied, ProjectAccessDenied, Principal, TokenAuthenticationError, authenticate_bearer, require_permission, require_project_access, issue_admin_session
 from ..config import is_placeholder_admin_username, is_placeholder_value
 from ..db_models import AuditLogRow, MemoryRow, MessageRow, ProjectRow
+from ..operations_service import OperationsService
 from ..v11_models import MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, RetrievalAuditRow
 
 SORT_FIELDS = {"created_at", "updated_at", "id", "status", "project_key", "title"}
@@ -239,5 +240,18 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     @router.get("/audit-events")
     def audit_events(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
         return query_list(AuditLogRow, lambda row: {"id": row.id, "project_id": row.project_id, "event_type": row.event_type, "subject_type": row.subject_type, "subject_id": row.subject_id, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
+
+    @router.get("/system/status")
+    def system_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        try:
+            require_permission(current, "admin")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        return {"data": _redact(OperationsService(session_factory).system_status()), "meta": {}, "request_id": _request_id(request)}
+
+    @router.get("/projects/{project_key}/archive-status")
+    def archive_status(project_key: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        project_context(request, project_key, None, current)
+        return {"data": OperationsService(session_factory).project_archive_status(project_key), "meta": {}, "request_id": _request_id(request)}
 
     return router
