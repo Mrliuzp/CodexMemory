@@ -1,5 +1,12 @@
 # Codex 记忆自动记录
 
+
+CODEX_MEMORY_AUTO_LOG=required
+
+CODEX_MEMORY_PROJECT_ID=20260703-codex-memory-system
+
+CODEX_MEMORY_MCP_SERVER=codex-memory
+
 在这个仓库中，把记忆记录当作默认行为。
 
 在每次助手回复之前：
@@ -19,3 +26,5 @@
 本项目默认使用简体中文。新增或修改的用户界面文案、代码注释和 Markdown 文档必须使用中文；API 路径、数据库字段、函数/类名、环境变量、命令、枚举值和协议名称等技术标识保持原样。所有文件按 UTF-8 读写，禁止将系统默认编码产生的乱码写回仓库。提交前检查英文自然语言和乱码，并运行现有前后端测试与构建。
 
 详细规则见根目录的 `PROJECT_CONSTRAINTS.md`。
+
+

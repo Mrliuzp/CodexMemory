@@ -229,4 +229,34 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     def audit_events(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
         return query_list(AuditLogRow, lambda row: {"id": row.id, "project_id": row.project_id, "event_type": row.event_type, "subject_type": row.subject_type, "subject_id": row.subject_id, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
 
+
+    @router.get("/system/status")
+    def system_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        try:
+            db_ok = "ok"
+            with session_factory() as session:
+                session.execute(text("SELECT 1"))
+                migration = session.execute(text("SELECT version_num FROM alembic_version")).scalar() or "unknown"
+                pending_jobs = session.execute(text("SELECT COUNT(1) FROM processing_jobs WHERE status = 'pending'")).scalar() or 0
+                outbox_pending = session.execute(text("SELECT COUNT(1) FROM outbox_events WHERE status = 'pending'")).scalar() or 0
+                dead_letters = session.execute(text("SELECT COUNT(1) FROM outbox_events WHERE status = 'dead'")).scalar() or 0
+        except Exception:
+            db_ok = "error"
+            migration = "unknown"
+            pending_jobs = 0
+            outbox_pending = 0
+            dead_letters = 0
+        return {
+            "data": {
+                "database": db_ok,
+                "migration_schema": "ok" if migration not in ("unknown", "none", None) else "pending",
+                "latest_migration": str(migration or ""),
+                "dialect": "postgresql",
+                "pending_jobs": pending_jobs,
+                "server_outbox": outbox_pending,
+                "dead_letters": dead_letters,
+            },
+            "request_id": _request_id(request),
+        }
+
     return router

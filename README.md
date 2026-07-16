@@ -1,271 +1,273 @@
-﻿# Codex 记忆系统
+# Codex 记忆系统
 
-这个目录包含一个可本地运行的、按项目隔离的 Codex 记忆层 MVP。它用于保留原始对话、提取分层记忆、检索相关知识、优先处理错误学习，并在生成答案之前构建提示注入上下文。
+Codex 记忆系统（`codex-memory-system`）是面向 Codex 和其他智能体的项目级长期记忆服务。它把对话原文、可复用经验、稳定知识和错误反模式分层保存，再通过 HTTP API、MCP、CLI 和 Codex Hook 提供项目隔离的检索与上下文注入能力。
 
-## 已实现能力
+当前仓库包含：
 
-- L0 原始日志：不经筛选地存储每一条捕获到的消息。
-- L1 工作记忆：存储可检索的问题、解决方案、代码片段、调试笔记和临时结论。
-- L2 知识库：存储稳定的工程规则、最佳实践、架构笔记以及可选的全局知识。
-- L3 错误记忆：以可读正文和 `metadata.error_memory` 两种形式存储结构化错误记录，包含 `error`、`context`、`trigger_condition`、`root_cause`、`fix` 和 `anti_pattern`。
-- 项目隔离：L0、L1 和 L3 都严格按 `project_id` 过滤；只有全局 L2 可以跨项目边界。
-- RAG 检索：应用 project/tag/module/type/layer 过滤器，先按层级优先级排序，再结合本地 token 向量相似度、时效性和使用权重。
-- 元数据标签：L0 的 `metadata.tags`、`metadata.module` 和 `metadata.type` 会提升为记忆标签，供检索过滤使用。
-- 可插拔嵌入：`EmbeddingBackend` 让检索和反思可以使用本地、缓存、密集向量或 HTTP JSON 嵌入后端。
-- 上下文注入：输出 `[Project Context]`、`[Error Memory - L3]`、`[Knowledge Base - L2]`、`[Working Memory - L1]` 和 `[Current Task]`；L3 条目会显式注入被禁止的反模式。
-- 答案前运行时钩子：`prepare_answer_context` 会在构建 RAG 上下文之前清空当前项目待处理的 L0 分层任务。
-- 自动分层：默认把 L0 写入持久化的待处理任务，并支持显式的立即处理、进程内异步队列，以及可调度的外部 worker。
-- 持久化处理任务：每次 L0 append 都会在分层开始前创建一条 `processing_jobs` 记录。
-- Worker 控制：`process_now=False` 是默认值；`process_now=True` 会立即清空当前项目的持久化任务。`enqueue_async=True` 会为长期运行的环境启动进程内 worker，而 CLI 的 `--async-process` 和 `--enqueue-worker` 会在命令退出前清空已入队的工作。
-- 任务可见性：按项目范围输出的 `jobs` 会显示待处理、运行中、完成和失败的 L0 分层任务。
-- 失败恢复：失败的 L0 分层任务可以重置为待处理并再次执行。
-- 失败隔离：某个项目失败的分层任务会被标记为失败，而不会阻塞其他待处理项目。
-- 运行超时恢复：超时的运行中 L0 分层任务可以按项目重置为待处理。
-- 重建：可以从 L0 重建项目的 L1/L2，同时保留并合并 L3；重建会写入审计事件。
-- 去重与历史：重复记忆会合并，每次更新都会记录到 `memory_versions`。
-- 反思引擎：将高频使用的 L1 提升到 L2，在从重复或合并后的 L1 生成稳定规则之前先聚类相似记忆，衰减过期 L1，清理过期且低价值的 L1，并写入摘要报告。
-- 运行时钩子：`CodexMemoryRuntime` 提供记录完整轮次和准备答案上下文的集成边界。
-- 治理：项目 L2 知识只能通过显式的 reviewer/reason 事件提升为全局 L2。
-- 审计导出：按项目范围的原始日志列表和导出包含原始日志、记忆、任务、反思报告和治理事件。
-- 版本审计：项目审计导出包含 `memory_versions`，用于历史重建。
-- 健康检查：报告 SQLite 完整性、外键约束、所需表和行数。
+- V1/V1.1 核心记忆服务：PostgreSQL、pgvector、FastAPI、Bearer Token、Alembic、Outbox、Worker 和审计治理。
+- 本地开发模式：SQLite、CLI、Python 运行时集成和 stdio MCP。
+- V1.2 P0 管理观测界面：Vue 3、Vite、Element Plus、Pinia 和 Vue Router。
 
-## 安装
+## 一、项目现在具有什么能力
+
+### 1. 记忆分层与知识沉淀
+
+系统把输入和派生内容分为四层：
+
+| 层级 | 内容 | 用途 |
+| --- | --- | --- |
+| L0 | 不经筛选的用户、助手和系统原始消息 | 保留事实来源，支持重放、审计和重建 |
+| L1 | 问题、解决方案、代码片段、调试笔记和临时结论 | 支持当前项目的短期工作 |
+| L2 | 稳定工程规则、最佳实践、架构知识和经审核的全局知识 | 跨任务复用长期经验 |
+| L3 | 错误、根因、触发条件、修复方案和反模式 | 在类似问题再次出现时优先提醒，避免重复踩坑 |
+
+系统支持从 L0 自动生成候选记忆，保留 `memory_versions`、来源关系、审计事件和反思报告；重复记忆可以合并，过期或低价值的 L1 可以衰减，稳定且高频使用的经验可以进入 L2。L3 会以结构化字段和可读正文保存。
+
+### 2. 项目隔离与安全治理
+
+- L0、L1、L3 默认严格按 `project_key` 隔离。
+- 当前作用域模型支持项目级和全局级；只有经过明确审核和理由记录的 L2 才能提升为全局知识。
+- HTTP API 使用 Bearer Token，Token 以哈希形式保存，并按项目和权限控制 `append`、`read`、`memory_write`、`reflect`、`admin` 等操作。
+- 访问不存在的项目、越权读取其他项目或缺少权限时返回相应的 401/403，不依赖调用方自行过滤。
+- 候选记忆、发布决策、任务重试、Profile 切换和治理操作都会写入审计记录。
+
+### 3. 可靠写入与异步处理
+
+V1.1 的写入链路用于解决“消息丢失、重复写入和异步任务失控”：
+
+- `/api/v1/append` 支持项目范围的 `event_key` 幂等；相同事件重复提交不会产生重复 L0 消息，正文不一致时返回 409 冲突。
+- L0 消息和服务端 transactional Outbox 在同一事务中写入，后续处理不阻塞原始消息落库。
+- Outbox 分发和任务 Worker 支持领取、租约、心跳、重试退避、死信状态以及过期租约恢复。
+- 原始 Hook 还提供本地 JSONL outbox；API 暂时不可用时先落本地，后续 Hook 再重放，并通过文件锁保证并发安全。
+- 失败任务可在管理 API 中查询、重试或通过 replay 重新生成处理任务。
+
+### 4. 检索与上下文构建
+
+- 支持按项目、作用域、层级、记忆类型过滤。
+- 支持词法检索、确定性 RRF 混合排序、L3 优先、上下文令牌预算和检索审计。
+- Embedding Profile 记录 Provider、模型、维度、分块和内容规范化版本；不同 Profile 的向量相互隔离，可回填、灰度切换和回滚。
+- 稠密检索是可选能力；稠密检索不可用时返回词法降级结果，不应阻塞上下文构建。
+- `/api/v1/context` 只注入正式可用的记忆；shadow、candidate、draft、needs_review 和 rejected 内容不会直接进入生产上下文。
+- 生成的上下文包含 `[Project Context]`、`[Error Memory - L3]`、`[Knowledge Base - L2]`、`[Working Memory - L1]` 和 `[Current Task]` 等分区，便于模型区分事实、规则、工作信息和当前任务。
+
+### 5. Codex 与应用接入
+
+- HTTP API：用于消息追加、记忆检索、上下文构建、反思、健康检查和管理操作。
+- MCP：提供 `build_context`、`retrieve_memory`、`record_outcome`、`health` 工具；生产部署通过 Streamable HTTP MCP 访问统一 API。
+- Codex Hook：`UserPromptSubmit` 记录用户消息并请求上下文，`Stop` 记录助手最终消息。
+- CLI：支持 append、retrieve、context、reflect、process、process-job、reflect-job、rebuild、export、jobs、retry-failed、reset-stale-running 和 health 等命令。
+- Python 集成：`CodexMemoryRuntime` 提供记录完整轮次和准备答案上下文的集成边界。
+
+### 6. 管理与运行观测
+
+V1.2 P0 管理后台用于观测，不作为业务数据写入入口，支持按项目和作用域查看：
+
+- Dashboard、授权项目和作用域。
+- 脱敏后的原始记录、候选记忆和已接受记忆。
+- Processing Job、Outbox、检索审计和安全/领域审计事件。
+- 系统状态、数据库迁移版本、待处理任务、Outbox 和死信数量。
+
+## 二、这些能力解决了什么问题
+
+项目主要解决智能体在长期协作中的五类问题：
+
+1. 对话结束后经验丢失：L0 保留原始事实，L1/L2/L3 将经验结构化，后续任务可以重新检索。
+2. 相似错误反复出现：L3 保存根因、触发条件、修复和反模式，并在答案前优先注入。
+3. 多项目记忆串线：所有查询和写入都在服务端执行项目/作用域授权，避免把 A 项目的内容泄露给 B 项目。
+4. Hook 或网络短暂失败导致消息丢失：客户端本地 outbox、服务端 Outbox、幂等键和任务重试共同保证可靠处理。
+5. 自动生成知识不受控：原始消息不可变，派生内容经过候选、证据、策略和审核链路；全局知识不会因为一次普通请求被直接发布。
+
+## 三、项目边界
+
+### 已明确支持的范围
+
+- 项目级长期记忆、知识分层、检索、上下文构建和错误学习。
+- SQLite 本地开发，以及 PostgreSQL 16 + pgvector 的服务化部署。
+- 单服务 API、独立 MCP 适配器、定时反思 Worker 和只读管理观测界面。
+- 项目级与全局级 Scope；全局知识必须经过治理流程。
+
+### 当前不承诺的范围
+
+- 这不是通用的自主知识库，也不会替代人工判断、代码审查或生产变更审批。
+- L0 是事实来源；LLM 或规则只允许生成可追溯的派生候选，不能改写原始消息，也不能自行改变项目、Scope、审核或发布状态。
+- `ErrorMemoryExtractor` 当前只用于 shadow 评估；不能把它理解为已经开放的全自动 LLM 分类、事实拆分或知识综合流水线。
+- 稠密检索和远程 Embedding Provider 是可配置增强能力，不保证任何 Provider 的可用性、召回质量或跨模型分数可比较；默认应保留词法降级路径。
+- 当前没有内置 HTTPS 反向代理、Token 轮换/吊销、完整多租户计费、备份恢复编排、告警体系或高可用数据库集群。这些需要由部署环境补齐。
+- Compose 中的 `worker` 当前以每日 `02:00` 反思任务为主；V1.1 Outbox/processing job 处理器虽已提供，可通过 `run_v11_once` 编排，但不应假设仅启动默认 Compose Worker 就完成所有异步作业。
+- 不以 Redis、Celery 或其他外部队列为运行前提；如果接入，需要自行设计容量、重试、数据驻留和故障恢复策略。
+
+## 四、如何使用
+
+### 1. 本地安装
+
+要求 Python 3.10 或更高版本：
 
 ```powershell
 cd "G:\Codex Project\20260703-codex-memory-system"
-python -m pip install -e .
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-## CLI 用法
-
-向持久队列追加一条原始 L0 消息：
+Windows 也可以使用项目脚本。首次执行会准备本地 Python 虚拟环境并安装项目：
 
 ```powershell
-python -m codex_memory.cli --db .\memory.db append --project demo --conversation c1 --role user --content "Bug: auth token refresh throws an exception. Fix: refresh before retry."
+.\start-local.ps1 health
+.\start-local.ps1 append --project demo --conversation c1 --role user --content "Bug: auth token refresh throws an exception"
+.\start-local.ps1 context --project demo --task "Fix auth token refresh"
 ```
 
-追加一条带审计元数据的原始 L0 消息：
+不带参数执行 `start-local.ps1` 会启动本地 HTTP 服务，默认地址为 `http://127.0.0.1:8765`；可通过 `CODEX_MEMORY_HTTP_HOST` 和 `CODEX_MEMORY_HTTP_PORT` 修改。
+
+### 2. CLI 示例
+
+下面示例使用 SQLite 文件 `memory.db`：
 
 ```powershell
-python -m codex_memory.cli --db .\memory.db append --project demo --conversation c1 --role user --content "Bug: auth token refresh throws an exception." --metadata-json '{"tool":"codex","source":"cli"}'
-```
+python -m codex_memory.cli --db .\memory.db append `
+  --project demo --conversation c1 --role user `
+  --content "Bug: migration fails after retry" --process-now
 
-追加并立即处理当前项目的待处理 L0 任务：
+python -m codex_memory.cli --db .\memory.db retrieve `
+  --project demo --query "migration retry bug"
 
-```powershell
-python -m codex_memory.cli --db .\memory.db append --project demo --conversation c1 --role user --content "Bug: auth token refresh throws an exception." --process-now
-```
+python -m codex_memory.cli --db .\memory.db context `
+  --project demo --task "Fix migration retry bug"
 
-检索项目记忆：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db retrieve --project demo --query "auth token retry bug"
-```
-
-按模块和类型标签过滤：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db retrieve --project demo --query "token retry" --module auth --tag-type api
-```
-
-按记忆层级过滤：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db retrieve --project demo --query "token retry" --layer L3
-```
-
-构建提示注入上下文：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db context --project demo --task "Fix auth token retry bug"
-```
-
-`context` 命令会在检索前处理所请求项目的待处理 L0 分层任务。使用 `--skip-pending` 可以只查看已经分层的记忆。
-
-从特定层级构建提示注入上下文：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db context --project demo --task "Fix auth token retry bug" --layer L3
-```
-
-从特定记忆类型构建提示注入上下文：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db context --project demo --task "Fix auth token retry bug" --type solution
-```
-
-运行离线反思：
-
-```powershell
 python -m codex_memory.cli --db .\memory.db reflect --project demo
-```
-
-运行一次可调度的 L0 分层 worker：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db process-job --iterations 1
-```
-
-按固定间隔持续运行 L0 分层 worker：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db process-job --interval 10 --forever
-```
-
-为一个或多个项目运行一次可调度的反思任务：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db reflect-job --project demo --project shared --iterations 1
-```
-
-按固定间隔持续运行：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db reflect-job --project demo --interval 3600 --forever
-```
-
-列出反思报告：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db reports --project demo
-```
-
-列出某个项目的 L0 原始日志：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db raw-logs --project demo
-```
-
-处理所有待处理的 L0 分层任务：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db process
-```
-
-列出某个项目的 L0 分层任务：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db jobs --project demo
-```
-
-重试某个项目失败的 L0 分层任务：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db retry-failed --project demo
-```
-
-重置某个项目中已过时的运行中 L0 分层任务：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db reset-stale-running --project demo --older-than-minutes 30
-```
-
-从 L0 重建项目派生记忆：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db rebuild --project demo
-```
-
-将已批准的项目 L2 知识提升为全局 L2：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db promote-global --project demo --memory-id 12 --reviewer lead --reason "applies to every project"
-```
-
-导出项目审计数据：
-
-```powershell
-python -m codex_memory.cli --db .\memory.db export --project demo
-```
-
-检查数据库健康状态：
-
-```powershell
 python -m codex_memory.cli --db .\memory.db health
 ```
 
-## HTTP 服务
+默认 `append` 先写入持久化处理队列；需要同步处理当前项目待处理任务时使用 `--process-now`。长期运行环境可以使用 `process-job` 或 `reflect-job`，失败任务可使用 `retry-failed`，历史数据可使用 `rebuild` 和 `export`。
 
-使用以下命令启动 API 服务器：
+### 3. HTTP API
+
+本地 SQLite API：
 
 ```powershell
-python -m codex_memory.cli --db .\memory.db serve --host 0.0.0.0 --port 8000
+python -m codex_memory.cli --db .\memory.db serve --host 127.0.0.1 --port 8765
 ```
 
-可用端点：
+生产版 API 使用 `/api/v1` 和 Bearer Token：
 
-- `GET /health`
-- `POST /append`
-- `POST /retrieve`
-- `POST /context`
-## MCP 服务器
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/api/v1/append` | 幂等追加 L0 消息 |
+| POST | `/api/v1/search` | 按项目/Scope 检索记忆 |
+| POST | `/api/v1/context` | 构建答案前上下文 |
+| POST | `/api/v1/memory` | 写入 L1 候选知识 |
+| POST | `/api/v1/reflect` | 对项目执行反思 |
+| GET | `/api/v1/health` | 检查数据库、Outbox 和向量状态 |
 
-使用以下命令启动 MCP 服务器：
+管理操作使用 `/api/v1/admin/*`，需要 `admin` 权限；管理观测界面使用 `/api/admin/v1/*`，登录后仅提供 P0 只读查询和系统状态接口。完整参数以 `docs/CODEX_MEMORY_V1_1_EXECUTABLE_SPEC.md` 和 `docs/v1.2/api-overview.md` 为准。
+
+### 4. MCP
+
+本地 stdio MCP：
 
 ```powershell
 python -m codex_memory.cli --db .\memory.db mcp
 ```
 
-这会通过 stdio 暴露同样的 `health`、`append`、`retrieve` 和 `context` 工具。
-## Codex 最短操作
+HTTP MCP 客户端通过以下地址访问部署后的服务：
 
-给 Codex 接入这套记忆时，按这个顺序做：
-
-1. 用户消息进来后，先调 `append`，`role=user`，`process_now=true`。
-2. 需要补充上下文时，先调 `context`，再把结果放进当前任务上下文。
-3. 模型回复完成后，再调一次 `append`，`role=assistant`，`process_now=true`。
-4. 需要排查或回看时，用 `health`、`retrieve`。
-
-最小约定：同一个对话全程复用同一个 `conversation_id`，并按项目隔离写入 `project_id`。
-
-## 运行时集成
-
-```python
-from codex_memory import CodexMemoryRuntime, ConversationMessage, MemoryService
-
-service = MemoryService("memory.db")
-runtime = CodexMemoryRuntime(service)
-
-runtime.record_conversation(
-    project_id="demo",
-    conversation_id="thread-1",
-    messages=[
-        ConversationMessage(role="user", content="Bug: migration fails"),
-        ConversationMessage(role="assistant", content="Fix: add guarded migration"),
-    ],
-)
-
-context = runtime.prepare_answer_context(
-    project_id="demo",
-    current_task="Fix migration failure",
-)
+```text
+http://127.0.0.1:8001/mcp
 ```
 
-`prepare_answer_context` 会在检索前处理所请求项目的待处理 L0 分层任务。传入 `process_pending=False` 可以只查看已经分层的记忆。
+MCP 适配器通过认证的 HTTP API 访问数据库，不直接绕过 API 读写数据库。
 
-## V1 Docker 部署
+### 5. Codex Hook
 
-V1 部署需要 Docker Desktop、PostgreSQL 16 和 pgvector。首次启动会自动执行 Alembic 迁移，并按 `.env` 中的配置幂等创建首个项目和 API Token。
+仓库内的 `.codex/hooks.json` 已声明 `UserPromptSubmit` 和 `Stop` 两个 Hook。使用前需要在运行 Codex 的环境中配置：
 
 ```powershell
+$env:CODEX_MEMORY_PROJECT_MAP='{"G:/Codex Project/20260703-codex-memory-system":"20260703-codex-memory-system"}'
+$env:CODEX_MEMORY_API_URL='http://127.0.0.1:8000'
+$env:CODEX_MEMORY_API_TOKEN='<项目 API Token>'
+# 可选：覆盖默认临时目录中的 JSONL outbox
+$env:CODEX_MEMORY_OUTBOX_PATH='C:\codex-memory\outbox.jsonl'
+```
+
+`CODEX_MEMORY_PROJECT_MAP` 的键是仓库路径，值是服务端项目键。不要把 Token 写入 Hook outbox、提交到仓库或放入公开日志。
+
+## 五、如何部署
+
+### 推荐方式：Docker Compose
+
+要求 Docker Desktop 或 Docker Engine + Compose。Compose 会启动 `postgres`、`api`、`mcp`、`worker` 和 `admin-web` 五个服务，其中 PostgreSQL 使用 `pgvector/pgvector:pg16`，数据库数据保存在 `pgdata` 命名卷。
+
+1. 创建环境文件：
+
+```powershell
+cd "G:\Codex Project\20260703-codex-memory-system"
 Copy-Item .env.example .env
-# 编辑 .env，修改 POSTGRES_PASSWORD、数据库 URL 中对应的密码和 SERVICE_TOKEN
+```
+
+2. 编辑 `.env`，至少修改以下值：
+
+```dotenv
+POSTGRES_PASSWORD=<随机数据库密码>
+CODEX_MEMORY_DATABASE_URL=postgresql+psycopg://codex:<同一个数据库密码>@postgres:5432/codex_memory
+CODEX_MEMORY_SERVICE_TOKEN=<随机高强度 Token>
+CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY=<项目键>
+CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME=<项目名称>
+CODEX_MEMORY_ADMIN_PASSWORD=<随机管理员密码>
+CODEX_MEMORY_ADMIN_SESSION_SECRET=<随机会话密钥>
+CODEX_MEMORY_ADMIN_PROJECT_KEY=<后台默认项目键>
+```
+
+`CODEX_MEMORY_SERVICE_TOKEN` 会作为引导项目的 API Token 和 MCP 服务 Token。首次部署使用的值应当是随机高强度值；示例文件中的默认值只适用于本地演示，不适用于生产环境。
+
+3. 构建并启动：
+
+```powershell
 docker compose up -d --build
 docker compose ps
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 ```
 
-服务地址：
+4. 访问服务：
 
-- API：`http://127.0.0.1:8000`
-- MCP Streamable HTTP：`http://127.0.0.1:8001/mcp`
-- 数据库数据：Docker 命名卷 `pgdata`
+| 服务 | 地址 | 说明 |
+| --- | --- | --- |
+| API | `http://127.0.0.1:8000` | V1/V1.1 HTTP API |
+| MCP | `http://127.0.0.1:8001/mcp` | Streamable HTTP MCP |
+| 管理后台 | `http://127.0.0.1:5174` | V1.2 P0 观测界面 |
+| PostgreSQL | Compose 内部 `postgres:5432` | 不建议直接暴露到宿主机 |
 
-`.env` 中的 `CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY` 是首个项目标识，`CODEX_MEMORY_SERVICE_TOKEN` 同时作为该项目的 API Token 和 MCP 服务 Token。生产环境请使用随机高强度值，并通过反向代理配置 HTTPS、访问控制和备份策略。
+API 容器启动时会执行 `alembic upgrade head`，然后幂等执行 bootstrap 创建首个项目和 Token。部署后可以查看日志：
 
-要替换默认的本地嵌入逻辑，传入一个实现了 `embed(text)` 和 `similarity(left, right)` 的对象：
-
-```python
-service = MemoryService("memory.db", embedding_backend=my_embedding_backend)
+```powershell
+docker compose logs -f api mcp worker admin-web
 ```
+
+### 生产部署必须补齐的工作
+
+- 使用反向代理和 HTTPS，不直接把内部服务暴露到公网。
+- 为不同项目或调用方创建独立 Token，并规划轮换、吊销和过期策略。
+- 配置 PostgreSQL 备份、恢复演练、迁移监控和 `pgdata` 持久化保护。
+- 监控 `/api/v1/health`、processing job、Outbox、retry/dead 状态和 Worker 日志。
+- 根据数据驻留要求决定是否启用远程 Embedding Provider，并配置脱敏、超时、预算和降级策略。
+- 不要执行 `docker compose down -v`，否则会删除 `pgdata` 数据卷。
+
+## 六、开发验证
+
+按仓库约束执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+node tools/static_check.js
+npm test --prefix apps/admin-web
+npm run build --prefix apps/admin-web
+git diff --check
+```
+
+需要 PostgreSQL 迁移覆盖时，额外设置 `CODEX_MEMORY_POSTGRES_TEST_URL` 后运行对应测试。Docker Compose 配置可用 `docker compose config` 检查。
+
+## 相关文档
+
+- [V1.1 执行规格](docs/CODEX_MEMORY_V1_1_EXECUTABLE_SPEC.md)：API、Outbox、Worker、检索、Embedding Profile 和治理契约。
+- [V1.2 架构](docs/v1.2/architecture.md)：管理观测界面的边界和请求模型。
+- [V1.2 管理 API 概览](docs/v1.2/api-overview.md)：后台查询接口。
+- [项目交接说明](docs/PROJECT_HANDOFF.md)：历史实现、验收证据和运维注意事项。
+- [项目约束](PROJECT_CONSTRAINTS.md)：语言、编码和提交前检查要求。
