@@ -9,18 +9,18 @@ const requiredFiles = [
   "SPEC_COVERAGE.md",
   "REQUIREMENTS_AUDIT.md",
   "src/codex_memory/__init__.py",
-  "src/codex_memory/classifier.py",
-  "src/codex_memory/cli.py",
-  "src/codex_memory/context.py",
-  "src/codex_memory/embedding.py",
-  "src/codex_memory/jobs.py",
-  "src/codex_memory/models.py",
-  "src/codex_memory/processor.py",
-  "src/codex_memory/reflection.py",
-  "src/codex_memory/retrieval.py",
-  "src/codex_memory/runtime.py",
-  "src/codex_memory/service.py",
-  "src/codex_memory/storage.py",
+  "src/codex_memory/domain/classifier.py",
+  "src/codex_memory/entrypoints/cli.py",
+  "src/codex_memory/domain/context.py",
+  "src/codex_memory/domain/embedding.py",
+  "src/codex_memory/domain/jobs.py",
+  "src/codex_memory/domain/models.py",
+  "src/codex_memory/domain/processor.py",
+  "src/codex_memory/domain/reflection.py",
+  "src/codex_memory/domain/retrieval.py",
+  "src/codex_memory/domain/runtime.py",
+  "src/codex_memory/domain/service.py",
+  "src/codex_memory/domain/storage.py",
   "tests/test_memory_system.py",
 ];
 
@@ -28,7 +28,7 @@ const requiredMarkers = {
   "pyproject.toml": [
     "面向 Codex 智能体的项目级分层记忆与 RAG 上下文构建器。",
   ],
-  "src/codex_memory/storage.py": [
+  "src/codex_memory/domain/storage.py": [
     "CREATE TABLE IF NOT EXISTS raw_logs",
     "CREATE TABLE IF NOT EXISTS processing_jobs",
     "CREATE TABLE IF NOT EXISTS memories",
@@ -63,7 +63,7 @@ const requiredMarkers = {
     "project_id TEXT NOT NULL",
     "project_id TEXT",
   ],
-  "src/codex_memory/classifier.py": [
+  "src/codex_memory/domain/classifier.py": [
     "Layer.L3",
     "Layer.L1",
     "final conclusion",
@@ -82,7 +82,7 @@ const requiredMarkers = {
     "_extract_field",
     "\\u53cd\\u6a21\\u5f0f",
   ],
-  "src/codex_memory/embedding.py": [
+  "src/codex_memory/domain/embedding.py": [
     "class EmbeddingBackend",
     "class LocalTokenEmbeddingBackend",
     "class HttpJsonEmbeddingBackend",
@@ -90,7 +90,7 @@ const requiredMarkers = {
     "def similarity",
     "cosine_similarity",
   ],
-  "src/codex_memory/retrieval.py": [
+  "src/codex_memory/domain/retrieval.py": [
     "embedding_backend",
     "modules",
     "type_tags",
@@ -98,7 +98,7 @@ const requiredMarkers = {
     "result.priority_score",
     "memory_types",
   ],
-  "src/codex_memory/context.py": [
+  "src/codex_memory/domain/context.py": [
     "[Project Context]",
     "[Error Memory - L3]",
     "[Knowledge Base - L2]",
@@ -108,7 +108,7 @@ const requiredMarkers = {
     "Trigger condition",
     "Forbidden anti-pattern",
   ],
-  "src/codex_memory/runtime.py": [
+  "src/codex_memory/domain/runtime.py": [
     "record_conversation",
     "prepare_answer_context",
     "process_pending",
@@ -119,7 +119,7 @@ const requiredMarkers = {
     "layers",
     "memory_types",
   ],
-  "src/codex_memory/service.py": [
+  "src/codex_memory/domain/service.py": [
     "process_now: bool = False",
     "promote_to_global_l2",
     "export_project_audit",
@@ -139,7 +139,7 @@ const requiredMarkers = {
     "layers",
     "memory_types",
   ],
-  "src/codex_memory/cli.py": [
+  "src/codex_memory/entrypoints/cli.py": [
     "promote-global",
     "--process-now",
     "--async-process",
@@ -162,7 +162,7 @@ const requiredMarkers = {
     "--skip-pending",
     "process_project_pending_memories(args.project)",
   ],
-  "src/codex_memory/processor.py": [
+  "src/codex_memory/domain/processor.py": [
     "mark_layering_jobs_running",
     "process_pending",
     "list_job_raw_log_ids",
@@ -176,14 +176,14 @@ const requiredMarkers = {
     "complete_jobs",
     "item.metadata",
   ],
-  "src/codex_memory/jobs.py": [
+  "src/codex_memory/domain/jobs.py": [
     "class LayeringJobRunner",
     "class ReflectionJobRunner",
     "run_once",
     "run_iterations",
     "run_forever",
   ],
-  "src/codex_memory/reflection.py": [
+  "src/codex_memory/domain/reflection.py": [
     "promote_frequent_l1",
     "synthesize_stable_rules",
     "Synthesized stable rules",
@@ -289,12 +289,12 @@ const mojibakeMarkers = [
 ];
 
 const forbiddenMarkers = {
-  "src/codex_memory/retrieval.py": [
+  "src/codex_memory/domain/retrieval.py": [
     "raw_logs",
     "list_raw_logs",
     "list_raw_logs_by_ids",
   ],
-  "src/codex_memory/context.py": [
+  "src/codex_memory/domain/context.py": [
     "raw_logs",
     "list_raw_logs",
     "list_raw_logs_by_ids",
@@ -303,31 +303,31 @@ const forbiddenMarkers = {
 
 const invariantChecks = [
   {
-    relative: "src/codex_memory/retrieval.py",
+    relative: "src/codex_memory/domain/retrieval.py",
     name: "layer priority order",
     check: (text) => /LAYER_PRIORITY\s*=\s*\{Layer\.L3:\s*3\.0,\s*Layer\.L2:\s*2\.0,\s*Layer\.L1:\s*1\.0\}/.test(text),
   },
   {
-    relative: "src/codex_memory/classifier.py",
+    relative: "src/codex_memory/domain/classifier.py",
     name: "structured error memory fields",
     check: (text) => ["error", "context", "trigger_condition", "root_cause", "fix", "anti_pattern"].every((field) =>
       text.includes(`"${field}"`)
     ),
   },
   {
-    relative: "src/codex_memory/storage.py",
+    relative: "src/codex_memory/domain/storage.py",
     name: "projectless memory limited to L2",
     check: (text) =>
       text.includes("CHECK (project_id IS NOT NULL OR layer = 'L2')") &&
       text.includes("if project_id is None and layer != Layer.L2"),
   },
   {
-    relative: "src/codex_memory/service.py",
+    relative: "src/codex_memory/domain/service.py",
     name: "append defaults to durable pending jobs",
     check: (text) => text.includes("process_now: bool = False"),
   },
   {
-    relative: "src/codex_memory/reflection.py",
+    relative: "src/codex_memory/domain/reflection.py",
     name: "reflection clusters before stable rule synthesis",
     check: (text) =>
       text.indexOf("merged = self.cluster_similar(project_id)") >= 0 &&

@@ -55,8 +55,11 @@ V1.1 的写入链路用于解决“消息丢失、重复写入和异步任务失
 - HTTP API：用于消息追加、记忆检索、上下文构建、反思、健康检查和管理操作。
 - MCP：提供 `build_context`、`retrieve_memory`、`record_outcome`、`health` 工具；生产部署通过 Streamable HTTP MCP 访问统一 API。
 - Codex Hook：`UserPromptSubmit` 记录用户消息并请求上下文，`Stop` 记录助手最终消息。
-- CLI：支持 append、retrieve、context、reflect、process、process-job、reflect-job、rebuild、export、jobs、retry-failed、reset-stale-running 和 health 等命令。
+- CLI：支持 `init`、`status`、`doctor`、`hook install/uninstall`、`import`，以及 append、retrieve、context、reflect、process、process-job、reflect-job、rebuild、export、jobs、retry-failed、reset-stale-running 和 health 等命令。
+- Knowledge Import Pipeline：支持 Markdown、TXT、JSONL、SQL 和常见源码文件，资料先进入 Reference Layer、分块和待审核候选，不直接发布为正式 Memory。
 - Python 集成：`CodexMemoryRuntime` 提供记录完整轮次和准备答案上下文的集成边界。
+
+项目 Python 代码已按职责拆分到 `domain`、`persistence`、`api`、`pipelines` 和 `entrypoints`；旧的顶层模块名保留为兼容转发层。详细说明见 [项目目录结构](docs/PROJECT_STRUCTURE.md)。
 
 ### 6. 管理与运行观测
 
@@ -93,7 +96,7 @@ V1.2 P0 管理后台用于观测，不作为业务数据写入入口，支持按
 - `ErrorMemoryExtractor` 当前只用于 shadow 评估；不能把它理解为已经开放的全自动 LLM 分类、事实拆分或知识综合流水线。
 - 稠密检索和远程 Embedding Provider 是可配置增强能力，不保证任何 Provider 的可用性、召回质量或跨模型分数可比较；默认应保留词法降级路径。
 - 当前没有内置 HTTPS 反向代理、Token 轮换/吊销、完整多租户计费、备份恢复编排、告警体系或高可用数据库集群。这些需要由部署环境补齐。
-- Compose 中的 `worker` 当前以每日 `02:00` 反思任务为主；V1.1 Outbox/processing job 处理器虽已提供，可通过 `run_v11_once` 编排，但不应假设仅启动默认 Compose Worker 就完成所有异步作业。
+- Compose 中的 `worker` 以常驻异步循环消费 Outbox/Processing Job，并在同一进程中按计划运行反思任务；V1.3.0 已不要求手工执行一次性 Worker 命令。
 - 不以 Redis、Celery 或其他外部队列为运行前提；如果接入，需要自行设计容量、重试、数据驻留和故障恢复策略。
 
 ## 四、如何使用
@@ -136,6 +139,23 @@ python -m codex_memory.cli --db .\memory.db context `
 python -m codex_memory.cli --db .\memory.db reflect --project demo
 python -m codex_memory.cli --db .\memory.db health
 ```
+
+V1.3.2 接入命令示例：
+
+```powershell
+python -m codex_memory.cli init --project demo --project-root . --api-url http://127.0.0.1:8000 --token '<项目 API Token>' --install-hook
+python -m codex_memory.cli status --project-root .
+python -m codex_memory.cli doctor --project-root .
+python -m codex_memory.cli hook uninstall --project-root .
+```
+
+V1.3.1 导入命令需要使用已经执行 Alembic 迁移的 V1 数据库：
+
+```powershell
+python -m codex_memory.cli --db .\memory-v1.db import --project demo .\docs\guide.md .\schema.sql
+```
+
+导入内容会写入 `source_documents`、`document_chunks` 和 `reference_candidates`，正式 Memory 仍需审核和既有治理流程。
 
 默认 `append` 先写入持久化处理队列；需要同步处理当前项目待处理任务时使用 `--process-now`。长期运行环境可以使用 `process-job` 或 `reflect-job`，失败任务可使用 `retry-failed`，历史数据可使用 `rebuild` 和 `export`。
 

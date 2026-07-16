@@ -58,12 +58,17 @@ services:
 
   worker:
     build: .
-    command: ["python", "-m", "codex_memory.worker", "--schedule", "02:00"]
+    command: ["python", "-m", "codex_memory.worker", "--mode", "async", "--poll-interval", "2", "--reflection-schedule", "02:00"]
     environment:
       CODEX_MEMORY_DATABASE_URL: ${CODEX_MEMORY_DATABASE_URL}
+      CODEX_MEMORY_WORKER_ROLE: async
+      CODEX_MEMORY_WORKER_LEASE_SECONDS: 60
+      CODEX_MEMORY_WORKER_HEARTBEAT_SECONDS: 20
+      CODEX_MEMORY_WORKER_BATCH_SIZE: 10
     depends_on:
       api:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

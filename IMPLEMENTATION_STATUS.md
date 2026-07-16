@@ -2,6 +2,25 @@
 
 更新时间：2026-07-12
 
+## V1.3 本期进展（2026-07-16）
+
+### V1.3.0 异步闭环
+
+已完成：统一幂等契约、Outbox 到 Processing Job 分发、单进程常驻 Worker、Handler 执行协议、租约恢复、重试/死信、Replay、Admin/Health 查询，以及 Compose 常驻 Worker 配置。
+
+### V1.3.1 Knowledge Import Pipeline
+
+已完成 P0：新增导入批次、源文档、文档分块和 Reference Candidate 数据层；支持 Markdown、TXT、JSONL、SQL 和常见源码文件；按内容哈希去重；提供管理 API、Reference 检索和 `codex-memory import`。导入结果保持在 Reference Layer 和待审核候选，不直接写入正式 Memory。
+
+### V1.3.2 Codex 接入体验
+
+已完成最小接入闭环：`init`、`status`、`doctor`、`hook install` 和 `hook uninstall`；配置和凭据写入用户级目录，Hook 安装保持幂等并保留已有配置。
+
+### 本轮验证
+
+- V1.3.1/V1.3.2 定向测试：已通过。
+- 全量回归、静态检查和 Compose 配置校验：在本轮全部改动完成后重新执行。
+
 ## 当前状态
 
 V1.1 纵向能力切片已在 SQLite 和 PostgreSQL 上完整实现并验证。未启用 V1.1 数据库结构时，原有 V1 行为保持不变。
