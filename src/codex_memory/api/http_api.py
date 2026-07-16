@@ -814,7 +814,10 @@ def create_v1_app(session_factory: Any) -> FastAPI:
                     active_jobs = session.scalar(select(func.count(ProcessingJobRow.id)).where(ProcessingJobRow.status == "running")) or 0
                     worker_status["active_jobs"] = int(active_jobs)
                     if worker is not None:
-                        age = (datetime.now(timezone.utc).replace(tzinfo=None) - worker.last_seen_at).total_seconds()
+                        last_seen_at = worker.last_seen_at
+                        if last_seen_at.tzinfo is None:
+                            last_seen_at = last_seen_at.replace(tzinfo=timezone.utc)
+                        age = (datetime.now(timezone.utc) - last_seen_at).total_seconds()
                         worker_status.update(
                             {
                                 "status": "healthy" if age <= 120 else "degraded",

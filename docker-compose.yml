@@ -40,7 +40,7 @@ services:
   admin-web:
     build: ./apps/admin-web
     ports:
-      - "5174:80"
+      - "5175:80"
     depends_on:
       api:
         condition: service_healthy
@@ -51,7 +51,7 @@ services:
       CODEX_MEMORY_API_URL: http://api:8000
       CODEX_MEMORY_API_TOKEN: ${CODEX_MEMORY_SERVICE_TOKEN}
     ports:
-      - "8001:8001"
+      - "8002:8001"
     depends_on:
       api:
         condition: service_healthy
