@@ -1,28 +1,22 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from tempfile import mkstemp
 
 import pytest
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 
-def _wal_factory():
-    from codex_memory.db_models import Base, V11Base
-    fd, path = mkstemp(suffix=".db")
-    os.close(fd)
-    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True, connect_args={"check_same_thread": False})
-    event.listen(engine, "connect", lambda c, _: c.execute("PRAGMA journal_mode=WAL"))
-    Base.metadata.create_all(engine)
-    V11Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-    return factory, path
+def _postgres_factory():
+    from codex_memory.db import create_postgres_test_engine, create_schema, create_session_factory
+    from codex_memory.db_models import V11Base
 
+    engine = create_postgres_test_engine()
+    create_schema(engine)
+    V11Base.metadata.create_all(engine)
+    return create_session_factory(engine), None
 
 def _seed_erp(factory):
     from codex_memory.db_models import ProjectRow, SessionRow
@@ -39,7 +33,7 @@ def test_concurrent_append_with_same_event_key_is_idempotent():
     from codex_memory.db_models import MessageRow
     from codex_memory.v1_service import AppendConflictError, V1MemoryService
 
-    factory, _ = _wal_factory()
+    factory, _ = _postgres_factory()
     _seed_erp(factory)
     service = V1MemoryService(factory)
     principal = Principal(project_key="erp", permissions=frozenset({"append"}))
@@ -56,7 +50,6 @@ def test_concurrent_append_with_same_event_key_is_idempotent():
         except AppendConflictError:
             pass
         except Exception as exc:
-            # SQLite 未启用 SKIP LOCKED 时可能出现，测试中允许这种情况
             import logging
             logging.warning("concurrent append error: %s", exc)
 
@@ -73,7 +66,7 @@ def test_concurrent_job_claim_has_no_duplicate_running():
     from codex_memory.db_models import OutboxEventRow, ProcessingJobRow, ProjectRow
     from codex_memory.v11_worker import OutboxDispatcher, V11JobWorker
 
-    factory, _ = _wal_factory()
+    factory, _ = _postgres_factory()
     with factory() as session:
         project = ProjectRow(project_key="erp", name="ERP")
         session.add(project)
@@ -114,7 +107,7 @@ def test_expired_lease_swept_and_recovered():
     from codex_memory.db_models import OutboxEventRow, ProjectRow
     from codex_memory.v11_worker import OutboxDispatcher, V11JobWorker
 
-    factory, _ = _wal_factory()
+    factory, _ = _postgres_factory()
     with factory() as session:
         project = ProjectRow(project_key="erp", name="ERP")
         session.add(project)
@@ -148,7 +141,7 @@ def test_cross_project_event_key_isolation():
     from codex_memory.db_models import MessageRow, ProjectRow, SessionRow
     from codex_memory.v1_service import V1MemoryService
 
-    factory, _ = _wal_factory()
+    factory, _ = _postgres_factory()
     with factory() as session:
         erp = ProjectRow(project_key="erp", name="ERP")
         mall = ProjectRow(project_key="mall", name="Mall")
@@ -177,7 +170,7 @@ def test_full_pipeline_append_to_candidate():
     from codex_memory.v11_worker import OutboxDispatcher, V11JobWorker
     from codex_memory.v11_handlers import V11JobHandlers
 
-    factory, _ = _wal_factory()
+    factory, _ = _postgres_factory()
     with factory() as session:
         project = ProjectRow(project_key="erp", name="ERP")
         session.add(project)
@@ -213,7 +206,7 @@ def test_handler_permanent_failure_goes_dead():
     from codex_memory.v11_worker import OutboxDispatcher, V11JobWorker
     from codex_memory.v11_handlers import V11JobHandlers
 
-    factory, _ = _wal_factory()
+    factory, _ = _postgres_factory()
     with factory() as session:
         project = ProjectRow(project_key="erp", name="ERP")
         session.add(project)

@@ -7,19 +7,18 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, select
 
 
-def _upgrade_sqlite(tmp_path: Path):
-    from codex_memory.db import create_session_factory
+def _upgrade_postgresql():
+    from codex_memory.db import create_postgres_test_engine, create_session_factory
 
-    database_url = f"sqlite:///{tmp_path / 'v13.db'}"
-    engine = create_engine(database_url)
+    engine = create_postgres_test_engine()
+    database_url = engine.url.render_as_string(hide_password=False)
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     command.upgrade(config, "head")
     return engine, create_session_factory(engine)
 
-
-def test_v13_schema_adds_async_contract_columns_and_worker_instances(tmp_path: Path) -> None:
-    engine, _ = _upgrade_sqlite(tmp_path)
+def test_v13_schema_adds_async_contract_columns_and_worker_instances() -> None:
+    engine, _ = _upgrade_postgresql()
     inspector = inspect(engine)
 
     outbox_columns = {item["name"] for item in inspector.get_columns("outbox_events")}
@@ -40,7 +39,7 @@ def test_v13_schema_adds_async_contract_columns_and_worker_instances(tmp_path: P
 
 
 def test_v13_models_accept_canonical_idempotency_fields() -> None:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import (
         Base,
         OutboxEventRow,
@@ -50,7 +49,7 @@ def test_v13_models_accept_canonical_idempotency_fields() -> None:
         WorkerInstanceRow,
     )
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     factory = create_session_factory(engine)

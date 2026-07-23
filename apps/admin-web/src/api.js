@@ -23,3 +23,11 @@ export function adminGet(path, params = {}) {
 export function adminLogin(username, password) {
   return request('/login', { method: 'POST', body: JSON.stringify({ username, password }) })
 }
+
+export function adminPost(path, body, params = {}) {
+  return request(path, { method: 'POST', body: JSON.stringify(body) }, params)
+}
+
+export function adminPut(path, body, params = {}) {
+  return request(path, { method: 'PUT', body: JSON.stringify(body) }, params)
+}

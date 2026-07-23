@@ -3,6 +3,7 @@ import DashboardView from './views/DashboardView.vue'
 import ProjectsView from './views/ProjectsView.vue'
 import RecordsView from './views/RecordsView.vue'
 import LoginView from './views/LoginView.vue'
+import ImportView from './views/ImportView.vue'
 
 export const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true, label: '登录' } },
@@ -11,6 +12,7 @@ export const routes = [
   { path: '/projects', component: ProjectsView, meta: { requiresAuth: true, label: '项目与作用域' } },
   { path: '/record', redirect: (to) => ({ path: '/records', query: to.query }), meta: { requiresAuth: true } },
   { path: '/records', component: RecordsView, meta: { requiresAuth: true, label: '只读数据' } },
+  { path: '/imports', component: ImportView, meta: { requiresAuth: true, label: '历史知识导入' } },
 ]
 
 const router = createRouter({

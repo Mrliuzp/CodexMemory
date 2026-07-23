@@ -18,7 +18,7 @@ def upgrade() -> None:
             "canary_embedding_profile_id",
             sa.Column(
                 "canary_embedding_profile_id",
-                sa.BigInteger().with_variant(sa.Integer, "sqlite"),
+                sa.BigInteger(),
                 sa.ForeignKey("embedding_profiles.id", ondelete="RESTRICT"),
                 nullable=True,
             ),
@@ -27,7 +27,7 @@ def upgrade() -> None:
             "previous_active_embedding_profile_id",
             sa.Column(
                 "previous_active_embedding_profile_id",
-                sa.BigInteger().with_variant(sa.Integer, "sqlite"),
+                sa.BigInteger(),
                 sa.ForeignKey("embedding_profiles.id", ondelete="RESTRICT"),
                 nullable=True,
             ),
@@ -49,12 +49,6 @@ def downgrade() -> None:
         "previous_active_embedding_profile_id",
         "canary_embedding_profile_id",
     ]
-    if bind.dialect.name == "sqlite":
-        with op.batch_alter_table("project_retrieval_profiles", recreate="always") as batch:
-            for name in names:
-                if name in columns:
-                    batch.drop_column(name)
-    else:
-        for name in names:
-            if name in columns:
-                op.drop_column("project_retrieval_profiles", name)
+    for name in names:
+        if name in columns:
+            op.drop_column("project_retrieval_profiles", name)

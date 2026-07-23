@@ -545,16 +545,16 @@ POST /api/v1/append
 新增或统一以下接口：
 
 ```text
-GET  /api/v1/admin/outbox
-GET  /api/v1/admin/outbox/{id}
-POST /api/v1/admin/outbox/{id}/replay
+GET  /api/admin/v1/outbox
+GET  /api/admin/v1/outbox/{id}
+POST /api/admin/v1/outbox/{id}/replay
 
-GET  /api/v1/admin/jobs
-GET  /api/v1/admin/jobs/{id}
-POST /api/v1/admin/jobs/{id}/retry
-POST /api/v1/admin/jobs/{id}/cancel
-POST /api/v1/admin/jobs/{id}/replay
-POST /api/v1/admin/jobs/reset-stale
+GET  /api/admin/v1/jobs
+GET  /api/admin/v1/jobs/{id}
+POST /api/admin/v1/jobs/{id}/retry
+POST /api/admin/v1/jobs/{id}/cancel
+POST /api/admin/v1/jobs/{id}/replay
+POST /api/admin/v1/jobs/reset-stale
 ```
 
 所有写接口必须要求 Admin 权限和 `reason`，并记录审计。已有兼容路径可以保留，但必须在响应中标注 API 版本。

@@ -22,8 +22,8 @@ def upgrade() -> None:
     if not sa.inspect(bind).has_table("daily_token_usage"):
         op.create_table(
             "daily_token_usage",
-            sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), primary_key=True, autoincrement=True),
-            sa.Column("project_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True),
+            sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+            sa.Column("project_id", sa.BigInteger(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True),
             sa.Column("usage_date", sa.Date(), nullable=False),
             sa.Column("token_type", sa.String(32), nullable=False),
             sa.Column("tokens_used", sa.Integer(), nullable=False, server_default="0"),

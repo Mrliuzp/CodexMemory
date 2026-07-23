@@ -10,7 +10,7 @@ class V12Base(DeclarativeBase):
     pass
 
 
-IdType = BigInteger().with_variant(Integer, "sqlite")
+IdType = BigInteger()
 Table("projects", V12Base.metadata, Column("id", IdType, primary_key=True))
 
 

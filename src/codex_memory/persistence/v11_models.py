@@ -12,11 +12,11 @@ class V11Base(DeclarativeBase):
     pass
 
 
-IdType = BigInteger().with_variant(Integer, "sqlite")
+IdType = BigInteger()
 for _table_name in ("projects", "messages", "memories"):
     Table(_table_name, V11Base.metadata, Column("id", IdType, primary_key=True))
 
-EmbeddingType = Vector().with_variant(JSON, "sqlite")
+EmbeddingType = Vector()
 
 
 class V11TimestampedRow:
@@ -240,19 +240,85 @@ class MemoryChunkRow(V11Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ImportFileRow(V11TimestampedRow, V11Base):
+    __tablename__ = "import_files"
+    __table_args__ = (
+        UniqueConstraint("import_batch_id", "content_hash", name="uq_import_files_batch_hash"),
+    )
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    scope_id: Mapped[int] = mapped_column(IdType, nullable=False, default=0, server_default="0")
+    import_batch_id: Mapped[int] = mapped_column(IdType, ForeignKey("import_batches.id", ondelete="RESTRICT"), index=True)
+    source_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_backend: Mapped[str] = mapped_column(String(32), nullable=False, default="database", server_default="database")
+    storage_key: Mapped[str | None] = mapped_column(String(500))
+    content: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="uploaded", server_default="uploaded")
+    parser_version: Mapped[str] = mapped_column(String(64), nullable=False, default="knowledge-import-v1", server_default="knowledge-import-v1")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class ImportUploadPartRow(V11TimestampedRow, V11Base):
+    """?????????????????"""
+
+    __tablename__ = "import_upload_parts"
+    __table_args__ = (
+        UniqueConstraint("import_batch_id", "upload_id", "part_number", name="uq_import_upload_parts_part"),
+    )
+
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    scope_id: Mapped[int] = mapped_column(IdType, nullable=False, default=0, server_default="0")
+    import_batch_id: Mapped[int] = mapped_column(IdType, ForeignKey("import_batches.id", ondelete="RESTRICT"), index=True)
+    upload_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    source_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    part_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_parts: Mapped[int] = mapped_column(Integer, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="uploaded", server_default="uploaded")
+
+
+class ImportIssueRow(V11TimestampedRow, V11Base):
+    __tablename__ = "import_issues"
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    scope_id: Mapped[int] = mapped_column(IdType, nullable=False, default=0, server_default="0")
+    import_batch_id: Mapped[int] = mapped_column(IdType, ForeignKey("import_batches.id", ondelete="RESTRICT"), index=True)
+    import_file_id: Mapped[int | None] = mapped_column(IdType, ForeignKey("import_files.id", ondelete="RESTRICT"), index=True)
+    source_document_id: Mapped[int | None] = mapped_column(IdType, ForeignKey("source_documents.id", ondelete="RESTRICT"), index=True)
+    issue_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="warning", server_default="warning")
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
 class ImportBatchRow(V11TimestampedRow, V11Base):
     __tablename__ = "import_batches"
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    scope_id: Mapped[int] = mapped_column(IdType, nullable=False, default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope_key: Mapped[str] = mapped_column(String(120), nullable=False, default="project", server_default="project")
     source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     document_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SourceDocumentRow(V11TimestampedRow, V11Base):
@@ -262,6 +328,7 @@ class SourceDocumentRow(V11TimestampedRow, V11Base):
     )
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    scope_id: Mapped[int] = mapped_column(IdType, nullable=False, default=0, server_default="0")
     import_batch_id: Mapped[int] = mapped_column(IdType, ForeignKey("import_batches.id", ondelete="RESTRICT"), index=True)
     source_name: Mapped[str] = mapped_column(String(500), nullable=False)
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -280,6 +347,7 @@ class DocumentChunkRow(V11Base):
     )
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    scope_id: Mapped[int] = mapped_column(IdType, nullable=False, default=0, server_default="0")
     document_id: Mapped[int] = mapped_column(IdType, ForeignKey("source_documents.id", ondelete="CASCADE"), index=True)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     heading: Mapped[str | None] = mapped_column(String(500))
@@ -297,6 +365,7 @@ class ReferenceCandidateRow(V11TimestampedRow, V11Base):
     )
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    scope_id: Mapped[int] = mapped_column(IdType, nullable=False, default=0, server_default="0")
     document_id: Mapped[int] = mapped_column(IdType, ForeignKey("source_documents.id", ondelete="RESTRICT"), index=True)
     chunk_id: Mapped[int] = mapped_column(IdType, ForeignKey("document_chunks.id", ondelete="RESTRICT"), index=True)
     title: Mapped[str | None] = mapped_column(String(300))
@@ -305,6 +374,12 @@ class ReferenceCandidateRow(V11TimestampedRow, V11Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.5, server_default="0.5")
     dedupe_key: Mapped[str] = mapped_column(String(128), nullable=False)
     evidence_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    scope_key: Mapped[str] = mapped_column(String(120), nullable=False, default="project", server_default="project")
+    published_memory_id: Mapped[int | None] = mapped_column(IdType, ForeignKey("memories.id", ondelete="RESTRICT"), index=True)
+    reviewer: Mapped[str | None] = mapped_column(String(160))
+    review_reason: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MemoryEmbeddingVectorRow(V11Base):

@@ -5,8 +5,11 @@ Codex 记忆系统（`codex-memory-system`）是面向 Codex 和其他智能体�
 当前仓库包含：
 
 - V1/V1.1 核心记忆服务：PostgreSQL、pgvector、FastAPI、Bearer Token、Alembic、Outbox、Worker 和审计治理。
-- 本地开发模式：SQLite、CLI、Python 运行时集成和 stdio MCP。
-- V1.2 P0 管理观测界面：Vue 3、Vite、Element Plus、Pinia 和 Vue Router。
+- 本地开发模式：PostgreSQL 16 + pgvector、CLI、FastAPI、Worker 和 stdio/HTTP MCP。
+- V1.2 管理后台：Vue 3、Vite、Element Plus、Pinia 和 Vue Router。
+- V1.3.1 历史知识导入：异步批次、文件与问题生命周期、分片上传、对象存储、候选审核和回滚。
+
+最新本地验收基线为 PostgreSQL 后端 `116 passed, 1 skipped`、前端 `1 passed`、Alembic 全新数据库升级到 `0021_v131_memory_scope (head)`；当前工作区改动尚未提交或推送。
 
 ## 一、项目现在具有什么能力
 
@@ -53,22 +56,23 @@ V1.1 的写入链路用于解决“消息丢失、重复写入和异步任务失
 ### 5. Codex 与应用接入
 
 - HTTP API：用于消息追加、记忆检索、上下文构建、反思、健康检查和管理操作。
-- MCP：提供 `build_context`、`retrieve_memory`、`record_outcome`、`health` 工具；生产部署通过 Streamable HTTP MCP 访问统一 API。
+- MCP：提供 `append_message`、`retrieve_memory`、`build_context`、`health` 工具；生产部署通过独立 Streamable HTTP MCP 服务访问统一 API。
 - Codex Hook：`UserPromptSubmit` 记录用户消息并请求上下文，`Stop` 记录助手最终消息。
-- CLI：支持 `init`、`status`、`doctor`、`hook install/uninstall`、`import`，以及 append、retrieve、context、reflect、process、process-job、reflect-job、rebuild、export、jobs、retry-failed、reset-stale-running 和 health 等命令。
-- Knowledge Import Pipeline：支持 Markdown、TXT、JSONL、SQL 和常见源码文件，资料先进入 Reference Layer、分块和待审核候选，不直接发布为正式 Memory。
+- CLI：支持 `init`、`status`、`doctor`、`hook install/uninstall`、`import`，以及通过正式 V1 API 执行 `append`、`retrieve`、`context`、`reflect` 和 `health`。
+- Knowledge Import Pipeline：支持 Markdown、TXT、JSON/JSONL、SQL、常见源码文件、PDF、DOCX 和 ZIP；通过异步批次上传、Outbox/Worker 解析、进度、取消、重试和审核治理，资料先进入 Reference Layer、分块和待审核候选，不直接发布为正式 Memory。
 - Python 集成：`CodexMemoryRuntime` 提供记录完整轮次和准备答案上下文的集成边界。
 
-项目 Python 代码已按职责拆分到 `domain`、`persistence`、`api`、`pipelines` 和 `entrypoints`；旧的顶层模块名保留为兼容转发层。详细说明见 [项目目录结构](docs/PROJECT_STRUCTURE.md)。
+项目 Python 代码已按职责拆分到 `domain`、`persistence`、`api`、`pipelines` 和 `entrypoints`；旧的文件数据库运行时与兼容转发层已删除。详细说明见 [项目目录结构](docs/PROJECT_STRUCTURE.md)。
 
 ### 6. 管理与运行观测
 
-V1.2 P0 管理后台用于观测，不作为业务数据写入入口，支持按项目和作用域查看：
+管理后台保留 V1.2 的只读观测能力，并在 V1.3.1 中增加受权限、审计、幂等和状态机约束的历史导入操作，支持：
 
 - Dashboard、授权项目和作用域。
 - 脱敏后的原始记录、候选记忆和已接受记忆。
 - Processing Job、Outbox、检索审计和安全/领域审计事件。
 - 系统状态、数据库迁移版本、待处理任务、Outbox 和死信数量。
+- 导入批次、文件、问题、进度、候选审核、取消、重试和回滚。
 
 ## 二、这些能力解决了什么问题
 
@@ -85,8 +89,8 @@ V1.2 P0 管理后台用于观测，不作为业务数据写入入口，支持按
 ### 已明确支持的范围
 
 - 项目级长期记忆、知识分层、检索、上下文构建和错误学习。
-- SQLite 本地开发，以及 PostgreSQL 16 + pgvector 的服务化部署。
-- 单服务 API、独立 MCP 适配器、定时反思 Worker 和只读管理观测界面。
+- PostgreSQL 16 + pgvector 的本地开发与服务化部署；不再支持文件数据库。
+- FastAPI、独立 MCP 服务、常驻异步 Worker，以及包含历史导入治理能力的管理后台。
 - 项目级与全局级 Scope；全局知识必须经过治理流程。
 
 ### 当前不承诺的范围
@@ -119,25 +123,28 @@ Windows 也可以使用项目脚本。首次执行会准备本地 Python 虚拟�
 .\start-local.ps1 context --project demo --task "Fix auth token refresh"
 ```
 
-不带参数执行 `start-local.ps1` 会启动本地 HTTP 服务，默认地址为 `http://127.0.0.1:8765`；可通过 `CODEX_MEMORY_HTTP_HOST` 和 `CODEX_MEMORY_HTTP_PORT` 修改。
+不带参数执行 `start-local.ps1` 会启动本地 HTTP 服务，默认地址为 `http://127.0.0.1:8000`；服务必须能够通过 `CODEX_MEMORY_DATABASE_URL` 连接已迁移的 PostgreSQL，可通过 `CODEX_MEMORY_HTTP_HOST` 和 `CODEX_MEMORY_HTTP_PORT` 修改监听地址。
 
 ### 2. CLI 示例
 
-下面示例使用 SQLite 文件 `memory.db`：
+下面示例通过正式 V1 API 访问 PostgreSQL。请先设置 API 地址和项目 Token：
 
 ```powershell
-python -m codex_memory.cli --db .\memory.db append `
+$env:CODEX_MEMORY_API_URL = "http://127.0.0.1:8000"
+$env:CODEX_MEMORY_API_TOKEN = "<项目 API Token>"
+
+python -m codex_memory.cli append `
   --project demo --conversation c1 --role user `
   --content "Bug: migration fails after retry" --process-now
 
-python -m codex_memory.cli --db .\memory.db retrieve `
+python -m codex_memory.cli retrieve `
   --project demo --query "migration retry bug"
 
-python -m codex_memory.cli --db .\memory.db context `
+python -m codex_memory.cli context `
   --project demo --task "Fix migration retry bug"
 
-python -m codex_memory.cli --db .\memory.db reflect --project demo
-python -m codex_memory.cli --db .\memory.db health
+python -m codex_memory.cli reflect --project demo
+python -m codex_memory.cli health
 ```
 
 V1.3.2 接入命令示例：
@@ -149,22 +156,33 @@ python -m codex_memory.cli doctor --project-root .
 python -m codex_memory.cli hook uninstall --project-root .
 ```
 
-V1.3.1 导入命令需要使用已经执行 Alembic 迁移的 V1 数据库：
+本地或诊断场景使用 V1.3.1 导入命令时，需要连接已经执行 Alembic 迁移的数据库：
 
+$env:CODEX_MEMORY_DATABASE_URL = "postgresql+psycopg://codex:change-me@127.0.0.1:5432/codex_memory"
 ```powershell
-python -m codex_memory.cli --db .\memory-v1.db import --project demo .\docs\guide.md .\schema.sql
+python -m codex_memory.cli import --project demo .\docs\guide.md .\schema.sql
 ```
 
-导入内容会写入 `source_documents`、`document_chunks` 和 `reference_candidates`，正式 Memory 仍需审核和既有治理流程。
+导入内容按 ImportBatch、ImportFile、ImportIssue、Processing Job 和候选记忆生命周期保存，并保留来源、版本与 Scope；正式 Memory 仍需审核和既有治理流程。
 
-默认 `append` 先写入持久化处理队列；需要同步处理当前项目待处理任务时使用 `--process-now`。长期运行环境可以使用 `process-job` 或 `reflect-job`，失败任务可使用 `retry-failed`，历史数据可使用 `rebuild` 和 `export`。
+Docker 部署后默认访问 <http://127.0.0.1:5174/imports> 使用管理端导入历史资料。页面支持创建批次、上传资料、启动异步解析、查看进度和候选、批准发布、拒绝、取消、重试和批次软回滚；导入内容不会绕过审核直接写入正式 Memory。支持 Markdown、TXT、JSON/JSONL、SQL、源码、PDF、DOCX 和 ZIP；大文件可跨请求分片上传，原文可使用数据库或文件系统对象存储；疑似 Prompt Injection 内容会被隔离，常见凭据会在候选层脱敏。本机 Admin Web 因端口占用使用 `5175`，MCP 已恢复正式端口 `8001`。
+
+文件系统对象存储需要让 API 和 Worker 使用相同路径；Compose 通过共享 `importdata` 卷满足这一要求：
+
+```powershell
+$env:IMPORT_STORAGE_BACKEND = "filesystem"
+$env:IMPORT_STORAGE_PATH = ".\.codex-import-storage"
+```
+
+
+`append` 通过正式 API 写入 PostgreSQL 和 transactional Outbox；异步任务由常驻 Worker 消费，失败任务通过管理 API 或管理后台治理。
 
 ### 3. HTTP API
 
-本地 SQLite API：
+本地 PostgreSQL API：
 
 ```powershell
-python -m codex_memory.cli --db .\memory.db serve --host 127.0.0.1 --port 8765
+python -m codex_memory.cli serve --host 127.0.0.1 --port 8000
 ```
 
 生产版 API 使用 `/api/v1` 和 Bearer Token：
@@ -178,14 +196,14 @@ python -m codex_memory.cli --db .\memory.db serve --host 127.0.0.1 --port 8765
 | POST | `/api/v1/reflect` | 对项目执行反思 |
 | GET | `/api/v1/health` | 检查数据库、Outbox 和向量状态 |
 
-管理操作使用 `/api/v1/admin/*`，需要 `admin` 权限；管理观测界面使用 `/api/admin/v1/*`，登录后仅提供 P0 只读查询和系统状态接口。完整参数以 `docs/CODEX_MEMORY_V1_1_EXECUTABLE_SPEC.md` 和 `docs/v1.2/api-overview.md` 为准。
+管理 API 的正式命名空间统一为 `/api/admin/v1/*`。登录并通过项目、Scope 和权限校验后，可查询运行状态和审计数据，也可执行历史导入、取消、重试、回滚与候选审核等受控写操作。现行契约以 `docs/PROJECT_STATUS_AND_NEXT_STEPS.md` 和 `docs/PROJECT_HANDOFF.md` 为准。
 
 ### 4. MCP
 
 本地 stdio MCP：
 
 ```powershell
-python -m codex_memory.cli --db .\memory.db mcp
+python -m codex_memory.cli mcp
 ```
 
 HTTP MCP 客户端通过以下地址访问部署后的服务：
@@ -252,7 +270,7 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
 | --- | --- | --- |
 | API | `http://127.0.0.1:8000` | V1/V1.1 HTTP API |
 | MCP | `http://127.0.0.1:8001/mcp` | Streamable HTTP MCP |
-| 管理后台 | `http://127.0.0.1:5174` | V1.2 P0 观测界面 |
+| 管理后台 | `http://127.0.0.1:5174` | 管理观测与 V1.3.1 历史导入 |
 | PostgreSQL | Compose 内部 `postgres:5432` | 不建议直接暴露到宿主机 |
 
 API 容器启动时会执行 `alembic upgrade head`，然后幂等执行 bootstrap 创建首个项目和 Token。部署后可以查看日志：
@@ -286,8 +304,10 @@ git diff --check
 
 ## 相关文档
 
+- [项目状态与下一步](docs/PROJECT_STATUS_AND_NEXT_STEPS.md)：当前实现、现行契约、默认端口和文档优先级。
+- [V1.3.1 历史导入交接](docs/HANDOFF_HISTORICAL_IMPORT.md)：导入能力、迁移、验收证据、风险和后续计划。
 - [V1.1 执行规格](docs/CODEX_MEMORY_V1_1_EXECUTABLE_SPEC.md)：API、Outbox、Worker、检索、Embedding Profile 和治理契约。
 - [V1.2 架构](docs/v1.2/architecture.md)：管理观测界面的边界和请求模型。
 - [V1.2 管理 API 概览](docs/v1.2/api-overview.md)：后台查询接口。
-- [项目交接说明](docs/PROJECT_HANDOFF.md)：历史实现、验收证据和运维注意事项。
+- [项目交接说明](docs/PROJECT_HANDOFF.md)：项目总体状态、现行契约和历史 V1 验收快照。
 - [项目约束](PROJECT_CONSTRAINTS.md)：语言、编码和提交前检查要求。

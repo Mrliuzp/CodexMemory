@@ -4,10 +4,10 @@ import pytest
 
 
 def test_messages_use_event_key_for_idempotency() -> None:
-    from codex_memory.db import create_sqlite_engine, create_session_factory, create_schema
+    from codex_memory.db import create_postgres_test_engine, create_session_factory, create_schema
     from codex_memory.db_models import MessageRow, ProjectRow, SessionRow
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     session_factory = create_session_factory(engine)
 
@@ -46,10 +46,10 @@ def test_messages_use_event_key_for_idempotency() -> None:
 
 
 def test_messages_allow_same_content_for_different_events() -> None:
-    from codex_memory.db import create_sqlite_engine, create_session_factory, create_schema
+    from codex_memory.db import create_postgres_test_engine, create_session_factory, create_schema
     from codex_memory.db_models import MessageRow, ProjectRow, SessionRow
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     session_factory = create_session_factory(engine)
 
@@ -89,9 +89,9 @@ def test_messages_allow_same_content_for_different_events() -> None:
 def test_schema_includes_memory_relations() -> None:
     from sqlalchemy import inspect
 
-    from codex_memory.db import create_schema, create_sqlite_engine
+    from codex_memory.db import create_schema, create_postgres_test_engine
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
 
     assert inspect(engine).has_table("memory_relations")

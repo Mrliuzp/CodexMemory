@@ -7,12 +7,12 @@ from fastapi.testclient import TestClient
 
 
 def _security_app() -> tuple[TestClient, Any, int]:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
-    from codex_memory.db_models import ApiKeyRow, MessageRow, ProjectRow
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
+    from codex_memory.db_models import ApiKeyRow, MessageRow, ProjectRow, SessionRow
     from codex_memory.http_api import create_v1_app
     from codex_memory.v11_models import MemoryCandidateRow, V11Base
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     factory = create_session_factory(engine)
@@ -28,9 +28,12 @@ def _security_app() -> tuple[TestClient, Any, int]:
                 permissions=["read"],
             )
         )
+        conversation = SessionRow(project_id=project_a.id, session_key="security-test")
+        session.add(conversation)
+        session.flush()
         source = MessageRow(
             project_id=project_a.id,
-            session_id=1,
+            session_id=conversation.id,
             event_key="event-1",
             role="user",
             content="source content containing a bearer-secret",

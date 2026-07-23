@@ -12,8 +12,8 @@ class Base(DeclarativeBase):
     pass
 
 
-IdType = BigInteger().with_variant(Integer, "sqlite")
-EmbeddingType = Vector(1536).with_variant(JSON, "sqlite")
+IdType = BigInteger()
+EmbeddingType = Vector(1536)
 
 
 class TimestampedRow:
@@ -81,6 +81,7 @@ class MemoryRow(TimestampedRow, Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="project", server_default="project")
+    scope_id: Mapped[int | None] = mapped_column(IdType, index=True)
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="rule", server_default="rule")
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="accepted", server_default="accepted")
 
@@ -154,6 +155,9 @@ from .v11_models import (
     DocumentChunkRow,
     EmbeddingProfileRow,
     ImportBatchRow,
+    ImportFileRow,
+    ImportIssueRow,
+    ImportUploadPartRow,
     JobAttemptRow,
     MemoryCandidateRow,
     MemoryChunkRow,

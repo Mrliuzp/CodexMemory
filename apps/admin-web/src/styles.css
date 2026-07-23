@@ -16,3 +16,6 @@ body { margin: 0; min-width: 960px; }
 .login-brand { padding: 0 0 26px; border-bottom: 1px solid #e2e7eb; }
 .login-heading { margin: 28px 0 22px; }.login-heading h1 { margin: 6px 0 8px; font-size: 28px; }.login-heading p { margin: 0; color: #71808b; line-height: 1.6; }
 .login-form { margin-top: 24px; }.login-button { width: 100%; margin-top: 8px; }.login-note { display: block; margin-top: 22px; color: #8a98a2; text-align: center; }
+
+.import-card { margin-top: 18px; }
+.field-hint { margin-top: 8px; color: var(--el-text-color-secondary); font-size: 12px; }

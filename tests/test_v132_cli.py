@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 from alembic import command
@@ -13,8 +12,9 @@ def test_cli_init_status_doctor_and_hook_lifecycle(tmp_path: Path, monkeypatch, 
     from codex_memory import cli
 
     monkeypatch.setenv("CODEX_MEMORY_CONFIG_PATH", str(tmp_path / "config" / "config.json"))
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / ".git").mkdir()
     monkeypatch.setattr("sys.argv", ["codex-memory", "init", "--project-root", str(tmp_path), "--project", "demo", "--token", "secret", "--install-hook"])
+    monkeypatch.setattr("codex_memory.entrypoints.onboarding.git_root", lambda _: tmp_path)
     cli.main()
     init_output = json.loads(capsys.readouterr().out)
     assert init_output["project_key"] == "demo"
@@ -45,18 +45,20 @@ def test_cli_init_creates_project_and_credential_in_migrated_database(tmp_path: 
     from codex_memory.db import create_session_factory
     from codex_memory.db_models import ApiKeyRow, ProjectRow
 
-    database_path = tmp_path / "memory-v1.db"
-    database_url = f"sqlite:///{database_path}"
+    from codex_memory.db import create_postgres_test_engine
+
+    test_engine = create_postgres_test_engine()
+    database_url = test_engine.url.render_as_string(hide_password=False)
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     command.upgrade(config, "head")
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / ".git").mkdir()
     monkeypatch.setenv("CODEX_MEMORY_CONFIG_PATH", str(tmp_path / "config" / "config.json"))
     monkeypatch.setattr("sys.argv", ["codex-memory", "init", "--project-root", str(tmp_path), "--project", "demo", "--token", "secret", "--database-url", database_url])
     cli.main()
     output = json.loads(capsys.readouterr().out)
     assert output["project_status"] == "project_ready"
-    factory = create_session_factory(create_engine(database_url))
+    factory = create_session_factory(test_engine)
     with factory() as session:
         assert session.scalar(select(ProjectRow).where(ProjectRow.project_key == "demo")) is not None
         assert session.scalar(select(ApiKeyRow)) is not None

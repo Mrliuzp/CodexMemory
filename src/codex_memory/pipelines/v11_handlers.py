@@ -34,10 +34,15 @@ class V11JobHandlers:
             "memory.published.v1",
             "publish_memory",
             "memory.reindex_requested.v1",
+            "parse_document",
+            "chunk_document",
         }:
             raise PermanentJobError(f"不支持的任务类型：{claim.job_type}")
 
     def execute(self, claim: JobClaim, context: HandlerContext) -> HandlerResult:
+        if claim.job_type in {"parse_document", "chunk_document"}:
+            self._handle_import_request(claim.payload)
+            return HandlerResult()
         if claim.job_type in {"message.appended.v1", "memory.candidate_requested.v1", "extract_memory_candidate"}:
             self._handle_candidate_request(claim.payload)
             return HandlerResult()
@@ -58,6 +63,13 @@ class V11JobHandlers:
         if isinstance(error, PermanentJobError):
             return ErrorClassification(kind="permanent", code="permanent", retryable=False)
         return ErrorClassification(kind="retryable", code="handler_error", retryable=True)
+
+    def _handle_import_request(self, payload: dict[str, Any]) -> None:
+        try:
+            from .v131_import import KnowledgeImportService
+            KnowledgeImportService(self.session_factory).process_import_file(int(payload["import_file_id"]))
+        except (KeyError, LookupError, ValueError) as error:
+            raise PermanentJobError(str(error)) from error
 
     def _handle_candidate_request(self, payload: dict[str, Any]) -> None:
         project_id = int(payload["project_id"])

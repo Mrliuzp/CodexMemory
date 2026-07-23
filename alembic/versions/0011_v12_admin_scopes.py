@@ -13,7 +13,7 @@ depends_on = None
 
 
 def _knowledge_scopes_table() -> sa.Table:
-    id_type = sa.BigInteger().with_variant(sa.Integer, "sqlite")
+    id_type = sa.BigInteger()
     return sa.table(
         "knowledge_scopes",
         sa.column("id", id_type),
@@ -27,7 +27,7 @@ def _knowledge_scopes_table() -> sa.Table:
 
 
 def _create_knowledge_scopes_table() -> None:
-    id_type = sa.BigInteger().with_variant(sa.Integer, "sqlite")
+    id_type = sa.BigInteger()
     op.create_table(
         "knowledge_scopes",
         sa.Column("id", id_type, primary_key=True, autoincrement=True),
@@ -44,7 +44,7 @@ def _create_knowledge_scopes_table() -> None:
 
 
 def _create_missing_default_scopes(bind: sa.Connection) -> None:
-    projects = sa.table("projects", sa.column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite")))
+    projects = sa.table("projects", sa.column("id", sa.BigInteger()))
     scopes = _knowledge_scopes_table()
     missing_default_scope = ~sa.exists(
         sa.select(sa.literal(1)).where(
@@ -67,23 +67,10 @@ def _create_missing_default_scopes(bind: sa.Connection) -> None:
     )
 
 
-def _create_sqlite_foreign_key_guard(bind: sa.Connection) -> None:
-    if bind.dialect.name == "sqlite":
-        bind.execute(
-            sa.text(
-                "CREATE TRIGGER IF NOT EXISTS trg_knowledge_scopes_project_fk "
-                "BEFORE INSERT ON knowledge_scopes "
-                "FOR EACH ROW WHEN NOT EXISTS (SELECT 1 FROM projects WHERE id = NEW.project_id) "
-                "BEGIN SELECT RAISE(ABORT, 'knowledge_scopes.project_id references an unknown project'); END"
-            )
-        )
-
-
 def upgrade() -> None:
     bind = op.get_bind()
     if not sa.inspect(bind).has_table("knowledge_scopes"):
         _create_knowledge_scopes_table()
-    _create_sqlite_foreign_key_guard(bind)
     _create_missing_default_scopes(bind)
 
 

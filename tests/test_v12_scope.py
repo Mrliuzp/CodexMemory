@@ -34,11 +34,11 @@ def _assert_scope_schema(database_url: str) -> None:
 
 
 def test_v12_scope_model_exposes_real_scopes_and_legacy_default_projection() -> None:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ProjectRow
     from codex_memory.v12_models import KnowledgeScopeRow, V12Base, legacy_default_scope
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V12Base.metadata.create_all(engine)
     factory = create_session_factory(engine)
@@ -59,8 +59,11 @@ def test_v12_scope_model_exposes_real_scopes_and_legacy_default_projection() -> 
     assert projected.is_default is True
 
 
-def test_v12_migration_creates_default_scopes_without_rewriting_legacy_records(tmp_path) -> None:
-    database_url = f"sqlite:///{tmp_path / 'v12.db'}"
+def test_v12_migration_creates_default_scopes_without_rewriting_legacy_records() -> None:
+    from codex_memory.db import create_postgres_test_engine
+
+    test_engine = create_postgres_test_engine()
+    database_url = test_engine.url.render_as_string(hide_password=False)
     config = _alembic_config(database_url)
     command.upgrade(config, "0010_v11_provider_budgets")
     engine = create_engine(database_url)
@@ -71,7 +74,7 @@ def test_v12_migration_creates_default_scopes_without_rewriting_legacy_records(t
         connection.execute(
             text(
                 "INSERT INTO memories (project_id, level, memory_type, content, confidence, status, usage_count, deprecated, scope, source_kind, review_status) "
-                "VALUES (:project_id, 'L2', 'fact', '{}', 0.5, 'accepted', 0, 0, 'project', 'rule', 'accepted')"
+                "VALUES (:project_id, 'L2', 'fact', '{}', 0.5, 'accepted', 0, false, 'project', 'rule', 'accepted')"
             ),
             {"project_id": project_id},
         )
@@ -95,8 +98,11 @@ def test_v12_migration_creates_default_scopes_without_rewriting_legacy_records(t
     assert "knowledge_scopes" not in set(inspect(engine).get_table_names())
 
 
-def test_v12_migration_rejects_scope_for_unknown_project(tmp_path) -> None:
-    database_url = f"sqlite:///{tmp_path / 'v12-fk.db'}"
+def test_v12_migration_rejects_scope_for_unknown_project() -> None:
+    from codex_memory.db import create_postgres_test_engine
+
+    test_engine = create_postgres_test_engine()
+    database_url = test_engine.url.render_as_string(hide_password=False)
     command.upgrade(_alembic_config(database_url), "head")
     engine = create_engine(database_url)
 
@@ -105,7 +111,7 @@ def test_v12_migration_rejects_scope_for_unknown_project(tmp_path) -> None:
             connection.execute(
                 text(
                     "INSERT INTO knowledge_scopes (project_id, scope_key, name, is_default, status) "
-                    "VALUES (999999, 'default', 'Default', 1, 'active')"
+                    "VALUES (999999, 'default', 'Default', true, 'active')"
                 )
             )
 

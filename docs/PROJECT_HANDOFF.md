@@ -1,8 +1,48 @@
-# codex-memory V1 项目交接说明
+# codex-memory 项目交接说明
 
-更新时间：2026-07-12  
+更新时间：2026-07-18
 仓库：G:/Codex Project/20260703-codex-memory-system  
-最新提交：670336e fix: complete v1 deployment verification
+当前状态：V1.3.1 历史知识导入已完成本地实现与部署验收，工作区改动尚未提交或推送。
+
+## 当前状态
+
+最新的详细交接和验证证据见 [HANDOFF_HISTORICAL_IMPORT.md](./HANDOFF_HISTORICAL_IMPORT.md)。旧的 `670336e`、`e37eb60`、`120 passed` 和迁移 `0002_memory_relations` 只代表 2026-07-12 的 V1 验收基线，不再代表项目最新状态。
+
+最新验证基线：
+
+- 后端：`206 passed, 1 skipped, 19 warnings`。
+- 前端：`1 passed`；生产构建通过。
+- 静态检查、UTF-8 检查、`git diff --check` 和 Compose 配置检查通过。
+- Alembic：`0021_v131_memory_scope (head)`。
+- Docker 验证中 API、PostgreSQL、向量、Outbox、Worker 和 Admin Web 正常。
+
+## 现行契约
+
+- 管理 API 正式命名空间：`/api/admin/v1/`。
+- 检索 API：`POST /api/v1/search`。
+- Event 和 API 对外使用 `project_key`；数据库 `project_id` 保留内部主键语义。
+- MCP 为独立服务，正式工具为 `append_message`、`retrieve_memory`、`build_context` 和 `health`。
+- Append 事务只写入 L0 与服务端 Outbox；Processing Job 由 Dispatcher 后续幂等创建。
+- Scope 迁移允许为历史记录回填真实的 `knowledge_scopes.id`。
+
+## 服务拓扑与端口
+
+- API：默认 `8000`。
+- 独立 MCP：默认 `8001`。
+- Admin Web：默认 `5174`。
+
+当前本机 Admin Web 因 `5174` 被占用而使用 `5175`；MCP Docker 映射已恢复正式端口 `8001`，与 Codex MCP 配置一致。
+
+## V1.3.1 已完成能力
+
+- 历史导入支持 Markdown、TXT、JSON/JSONL、SQL、源码/代码、PDF、DOCX 和 ZIP。
+- 支持批次、文件、问题、分片上传、进度查询、取消、重试、回滚和审核发布。
+- 支持文件系统对象存储、内容哈希、业务键去重、Prompt Injection 隔离、凭据脱敏和 ZIP 安全限制。
+- 导入内容先形成 Candidate，不绕过审核直接发布正式 Memory。
+
+## 历史 V1 验收快照
+
+以下原文记录 2026-07-12 的 V1 验收状态，用于历史追溯，不代表当前迁移版本、测试数量、MCP 工具或下一步计划。
 
 ## 项目目标
 

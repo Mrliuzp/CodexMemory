@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import base64
 import os
 import re
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import OperationalError
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..auth import PermissionDenied, ProjectAccessDenied, Principal, TokenAuthenticationError, authenticate_bearer, require_permission, require_project_access, issue_admin_session
 from ..db_models import AuditLogRow, MemoryRow, MessageRow, ProjectRow
-from ..v11_models import MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, RetrievalAuditRow
+from ..v11_models import ImportBatchRow, ImportFileRow, ImportIssueRow, ImportUploadPartRow, MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, ReferenceCandidateRow, RetrievalAuditRow
 
 SORT_FIELDS = {"created_at", "updated_at", "id", "status", "project_key", "title"}
 SENSITIVE_KEY = re.compile(r"(?:api[_-]?key|authorization|bearer|password|secret|token|credential)", re.I)
@@ -60,13 +61,83 @@ def _validate_sort(sort: str) -> None:
 def _scope_allowed(session: Session, project: ProjectRow, scope_id: str | None) -> bool:
     if not scope_id:
         return True
+    scope_value = str(scope_id)
     project_suffix = project.project_key.removeprefix("project-")
-    if scope_id in {"default", f"scope-{project_suffix}"}:
+    if scope_value in {"default", "project", f"scope-{project_suffix}"}:
         return True
     if not inspect(session.bind).has_table("knowledge_scopes"):
-        return False
-    row = session.execute(text("SELECT id FROM knowledge_scopes WHERE project_id = :project_id AND (CAST(id AS TEXT) = :scope_id OR scope_key = :scope_id)"), {"project_id": project.id, "scope_id": scope_id}).first()
+        return scope_value == str(project.id)
+    row = session.execute(text("SELECT id FROM knowledge_scopes WHERE project_id = :project_id AND (CAST(id AS TEXT) = :scope_id OR scope_key = :scope_id)"), {"project_id": project.id, "scope_id": scope_value}).first()
     return row is not None
+
+class ImportBatchItem(BaseModel):
+    source_name: str
+    content: str = ""
+    content_base64: str | None = None
+    source_type: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def _item_content(item: ImportBatchItem) -> str:
+    if item.content_base64 is None:
+        return item.content
+    try:
+        raw = base64.b64decode(item.content_base64, validate=True)
+    except (ValueError, base64.binascii.Error) as error:
+        raise ValueError("content_base64 不是有效的 Base64") from error
+    return "base64:" + base64.b64encode(raw).decode("ascii")
+
+def _item_size(item: ImportBatchItem) -> int:
+    if item.content_base64 is not None:
+        try:
+            return len(base64.b64decode(item.content_base64, validate=True))
+        except (ValueError, base64.binascii.Error) as error:
+            raise ValueError("content_base64 不是有效的 Base64") from error
+    return len(item.content.encode("utf-8"))
+class ImportChunkStartRequest(BaseModel):
+    source_name: str
+    source_type: str | None = None
+    total_parts: int = Field(ge=1, le=1024)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImportChunkPartRequest(BaseModel):
+    content: str = ""
+    content_base64: str | None = None
+    total_parts: int | None = Field(default=None, ge=1, le=1024)
+    source_name: str | None = None
+    source_type: str | None = None
+
+
+def _chunk_content(payload: ImportChunkPartRequest) -> str:
+    if payload.content_base64 is None:
+        return payload.content
+    try:
+        raw = base64.b64decode(payload.content_base64, validate=True)
+    except (ValueError, base64.binascii.Error) as error:
+        raise ValueError("content_base64 ????? Base64") from error
+    return "base64:" + base64.b64encode(raw).decode("ascii")
+
+
+def _chunk_size(payload: ImportChunkPartRequest) -> int:
+    if payload.content_base64 is not None:
+        try:
+            return len(base64.b64decode(payload.content_base64, validate=True))
+        except (ValueError, base64.binascii.Error) as error:
+            raise ValueError("content_base64 ????? Base64") from error
+    return len(payload.content.encode("utf-8"))
+
+
+class ImportBatchCreateRequest(BaseModel):
+    project_key: str | None = None
+    scope_key: str = "project"
+    items: list[ImportBatchItem] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+class ImportReviewRequest(BaseModel):
+    decision: str
+    reviewer: str | None = None
+    reason: str | None = None
 
 class AdminLoginRequest(BaseModel):
     username: str
@@ -90,6 +161,11 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         except RuntimeError as error:
             raise _error(request, "login_not_configured", str(error), status.HTTP_503_SERVICE_UNAVAILABLE) from error
         return {"access_token": token, "token_type": "bearer", "expires_in": 8 * 60 * 60, "request_id": _request_id(request)}
+    def write_import_audit(project_key: str, event_type: str, subject_type: str, subject_id: str, metadata: dict[str, Any] | None = None) -> None:
+        with session_factory() as session:
+            project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
+            session.add(AuditLogRow(project_id=project.id if project else None, event_type=event_type, subject_type=subject_type, subject_id=subject_id, metadata_json=metadata or {}))
+            session.commit()
     def principal(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> Principal:
         if credentials is None or credentials.scheme.lower() != "bearer":
             error = _error(request, "authentication_required", "需要 Bearer 令牌", status.HTTP_401_UNAUTHORIZED)
@@ -133,7 +209,19 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             query = select(model)
             if project_id is not None and hasattr(model, "project_id"):
                 query = query.where(model.project_id == project_id)
-            if scope_id and hasattr(model, "scope") and scope_id not in {"default", "project"}:
+            if scope_id and hasattr(model, "scope_id"):
+                scope_value = str(scope_id)
+                if inspect(session.bind).has_table("knowledge_scopes"):
+                    scope_row = session.execute(
+                        text("SELECT id FROM knowledge_scopes WHERE project_id = :project_id AND (scope_key = :scope_id OR CAST(id AS TEXT) = :scope_id OR (:scope_id IN ('project', 'default') AND is_default = :is_default))"),
+                        {"project_id": project_id, "scope_id": scope_value, "is_default": True},
+                    ).first()
+                    query = query.where(model.scope_id == int(scope_row[0])) if scope_row is not None else query.where(model.scope_id == -1)
+                elif scope_value.isdigit():
+                    query = query.where(model.scope_id == int(scope_value))
+                elif project_id is not None:
+                    query = query.where(model.scope_id == project_id)
+            elif scope_id and hasattr(model, "scope") and str(scope_id) not in {"default", "project"}:
                 query = query.where(model.scope.in_([scope_id, "project"]))
             total = int(session.scalar(select(func.count()).select_from(query.subquery())) or 0)
             column = getattr(model, sort, None) or getattr(model, "created_at", model.id)
@@ -230,6 +318,446 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         return query_list(AuditLogRow, lambda row: {"id": row.id, "project_id": row.project_id, "event_type": row.event_type, "subject_type": row.subject_type, "subject_id": row.subject_id, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
 
 
+
+    @router.get("/import-batches")
+    def import_batches(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            ImportBatchRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "status": row.status, "scope_key": row.scope_key, "scope_id": row.scope_id, "source_type": row.source_type, "source_count": row.source_count, "document_count": row.document_count, "chunk_count": row.chunk_count, "error_count": row.error_count, "processed_count": row.processed_count, "retry_count": row.retry_count, "created_at": _row_value(row, "created_at"), "started_at": _row_value(row, "started_at"), "completed_at": _row_value(row, "completed_at"), "cancelled_at": _row_value(row, "cancelled_at"), "rolled_back_at": _row_value(row, "rolled_back_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+        )
+
+    @router.post("/import-batches")
+    def create_import_batch(payload: ImportBatchCreateRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        if not payload.project_key:
+            raise _error(request, "project_required", "必须指定项目键", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            project_context(request, payload.project_key, payload.scope_key, current)
+            from ..pipelines.v131_import import ImportItem, KnowledgeImportService
+            service = KnowledgeImportService(session_factory)
+            if payload.items is None:
+                batch_id = service.create_batch(payload.project_key, payload.scope_key, payload.metadata)
+                write_import_audit(payload.project_key, "import.batch.created", "import_batch", str(batch_id), {"mode": "async", "request_id": _request_id(request)})
+                return {"data": {"batch_id": batch_id, "status": "draft", "source_count": 0}, "request_id": _request_id(request)}
+            if not payload.items or len(payload.items) > 100:
+                raise _error(request, "invalid_import_items", "每批必须包含 1 至 100 个导入项", status.HTTP_422_UNPROCESSABLE_ENTITY)
+            total_bytes = sum(_item_size(item) for item in payload.items)
+            if total_bytes > 4 * 1024 * 1024:
+                raise _error(request, "import_too_large", "单批导入内容不能超过 4 MiB", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+            result = service.import_items(
+                payload.project_key,
+                [ImportItem(item.source_name, _item_content(item), item.source_type, item.metadata) for item in payload.items],
+                {**payload.metadata, "scope_key": payload.scope_key},
+            )
+        except (LookupError, ValueError, FileNotFoundError) as error:
+            raise _error(request, "import_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(payload.project_key, "import.batch.created", "import_batch", str(result.batch_id), {"mode": "inline_compatibility", "documents": result.documents, "request_id": _request_id(request)})
+        return {"data": result.__dict__, "request_id": _request_id(request)}
+
+    @router.post("/import-batches/{batch_id}/files")
+    def upload_import_files(batch_id: int, payload: ImportBatchCreateRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        if not payload.items or len(payload.items) > 100:
+            raise _error(request, "invalid_import_items", "每次必须包含 1 至 100 个导入文件", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            total_bytes = sum(_item_size(item) for item in payload.items)
+        except ValueError as error:
+            raise _error(request, "invalid_import_content", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        if total_bytes > 4 * 1024 * 1024:
+            raise _error(request, "import_too_large", "单次上传内容不能超过 4 MiB", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        from ..pipelines.v131_import import ImportItem, KnowledgeImportService
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        try:
+            result = KnowledgeImportService(session_factory).add_files(batch_id, [ImportItem(item.source_name, _item_content(item), item.source_type, item.metadata) for item in payload.items])
+        except (LookupError, ValueError) as error:
+            raise _error(request, "import_upload_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(project.project_key, "import.files.uploaded", "import_batch", str(batch_id), {"added": result["added"], "request_id": _request_id(request)})
+        return {"data": result, "request_id": _request_id(request)}
+
+    @router.post("/import-batches/{batch_id}/uploads")
+    def begin_import_upload(batch_id: int, payload: ImportChunkStartRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        from ..pipelines.v131_import import KnowledgeImportService
+        try:
+            result = KnowledgeImportService(session_factory).begin_upload(batch_id, payload.source_name, payload.source_type, payload.total_parts, payload.metadata)
+        except (LookupError, ValueError) as error:
+            raise _error(request, "import_upload_init_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(project.project_key, "import.upload.started", "import_batch", str(batch_id), {"upload_id": result["upload_id"], "request_id": _request_id(request)})
+        return {"data": result, "request_id": _request_id(request)}
+
+    @router.get("/import-batches/{batch_id}/uploads/{upload_id}")
+    def import_upload_status(batch_id: int, upload_id: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            rows = session.scalars(select(ImportUploadPartRow).where(ImportUploadPartRow.import_batch_id == batch_id, ImportUploadPartRow.upload_id == upload_id).order_by(ImportUploadPartRow.part_number)).all()
+            if not rows:
+                raise _error(request, "upload_not_found", "?????????", status.HTTP_404_NOT_FOUND)
+            return {"data": {"upload_id": upload_id, "source_name": rows[0].source_name, "source_type": rows[0].source_type, "total_parts": rows[0].total_parts, "uploaded_parts": [row.part_number for row in rows if row.status in {"uploaded", "completed"}], "status": "completed" if all(row.status == "completed" for row in rows) else "uploading"}, "request_id": _request_id(request)}
+
+    @router.put("/import-batches/{batch_id}/uploads/{upload_id}/parts/{part_number}")
+    def put_import_upload_part(batch_id: int, upload_id: str, part_number: int, payload: ImportChunkPartRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        try:
+            size = _chunk_size(payload)
+        except ValueError as error:
+            raise _error(request, "invalid_import_content", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        if size > 4 * 1024 * 1024:
+            raise _error(request, "import_part_too_large", "???????? 4 MiB", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        from ..pipelines.v131_import import KnowledgeImportService
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            part = session.scalar(select(ImportUploadPartRow).where(ImportUploadPartRow.import_batch_id == batch_id, ImportUploadPartRow.upload_id == upload_id).order_by(ImportUploadPartRow.part_number))
+            if part is None:
+                if payload.total_parts is None or not payload.source_name:
+                    raise _error(request, "upload_not_found", "?????????????????", status.HTTP_404_NOT_FOUND)
+                source_name, source_type, total_parts = payload.source_name, payload.source_type, payload.total_parts
+            else:
+                source_name, source_type, total_parts = part.source_name, part.source_type, part.total_parts
+        try:
+            result = KnowledgeImportService(session_factory).put_upload_part(batch_id, upload_id, part_number, total_parts, source_name, source_type, _chunk_content(payload))
+        except (LookupError, ValueError) as error:
+            raise _error(request, "import_part_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        return {"data": result, "request_id": _request_id(request)}
+
+    @router.post("/import-batches/{batch_id}/uploads/{upload_id}:complete")
+    @router.post("/import-batches/{batch_id}/uploads/{upload_id}/complete")
+    def complete_import_upload(batch_id: int, upload_id: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        from ..pipelines.v131_import import KnowledgeImportService
+        try:
+            result = KnowledgeImportService(session_factory).complete_upload(batch_id, upload_id)
+        except (LookupError, ValueError) as error:
+            raise _error(request, "import_upload_complete_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(project.project_key, "import.upload.completed", "import_batch", str(batch_id), {"upload_id": upload_id, "request_id": _request_id(request)})
+        return {"data": result, "request_id": _request_id(request)}
+
+    @router.post("/import-batches/{batch_id}:start")
+    @router.post("/import-batches/{batch_id}/start")
+    def start_import_batch(batch_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        from ..pipelines.v131_import import KnowledgeImportService
+        try:
+            result = KnowledgeImportService(session_factory).start_batch(batch_id)
+        except (LookupError, ValueError) as error:
+            raise _error(request, "import_start_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(project.project_key, "import.batch.queued", "import_batch", str(batch_id), {"queued": result["queued"], "request_id": _request_id(request)})
+        return {"data": result, "request_id": _request_id(request)}
+
+    @router.get("/import-batches/{batch_id}/files")
+    def import_batch_files(batch_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            rows = session.scalars(select(ImportFileRow).where(ImportFileRow.import_batch_id == batch_id).order_by(ImportFileRow.id)).all()
+            data = [{"id": row.id, "scope_id": row.scope_id, "source_name": row.source_name, "source_type": row.source_type, "size_bytes": row.size_bytes, "content_hash": row.content_hash, "storage_backend": row.storage_backend, "storage_key": row.storage_key, "status": row.status, "error_message": row.error_message, "created_at": _row_value(row, "created_at"), "updated_at": _row_value(row, "updated_at")} for row in rows]
+            return {"data": data, "request_id": _request_id(request)}
+
+    @router.get("/import-batches/{batch_id}/issues")
+    def import_batch_issues(batch_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            rows = session.scalars(select(ImportIssueRow).where(ImportIssueRow.import_batch_id == batch_id).order_by(ImportIssueRow.id)).all()
+            data = [{"id": row.id, "scope_id": row.scope_id, "import_file_id": row.import_file_id, "source_document_id": row.source_document_id, "issue_type": row.issue_type, "severity": row.severity, "message": row.message, "metadata": _redact(row.metadata_json), "created_at": _row_value(row, "created_at")} for row in rows]
+            return {"data": data, "request_id": _request_id(request)}
+    @router.get("/reference-candidates")
+    def reference_candidates(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
+        return query_list(
+            ReferenceCandidateRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "title": row.title, "content": _redact(row.content), "status": row.status, "confidence": row.confidence, "document_id": row.document_id, "chunk_id": row.chunk_id, "scope_key": row.scope_key, "scope_id": row.scope_id, "published_memory_id": row.published_memory_id, "reviewer": row.reviewer, "review_reason": row.review_reason, "created_at": _row_value(row, "created_at"), "reviewed_at": _row_value(row, "reviewed_at"), "rolled_back_at": _row_value(row, "rolled_back_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+        )
+
+    @router.post("/reference-candidates/{candidate_id}/review")
+    def review_reference_candidate(candidate_id: int, payload: ImportReviewRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            candidate = session.get(ReferenceCandidateRow, candidate_id)
+            if candidate is None:
+                raise _error(request, "candidate_not_found", "导入候选不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, candidate.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        try:
+            from ..pipelines.v131_import import KnowledgeImportService
+            result = KnowledgeImportService(session_factory).review_candidate(candidate_id, payload.decision, payload.reviewer, payload.reason)
+        except (LookupError, ValueError) as error:
+            raise _error(request, "candidate_review_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(project.project_key, "import.candidate.reviewed", "reference_candidate", str(candidate_id), {"decision": payload.decision, "reviewer": payload.reviewer, "request_id": _request_id(request)})
+        return {"data": result, "request_id": _request_id(request)}
+
+    @router.post("/reference-candidates/{candidate_id}/rollback")
+    def rollback_reference_candidate(candidate_id: int, payload: ImportReviewRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            candidate = session.get(ReferenceCandidateRow, candidate_id)
+            if candidate is None:
+                raise _error(request, "candidate_not_found", "导入候选不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, candidate.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            require_project_access(current, project.project_key)
+        try:
+            from ..pipelines.v131_import import KnowledgeImportService
+            result = KnowledgeImportService(session_factory).rollback_candidate(candidate_id, payload.reason)
+        except (LookupError, ValueError) as error:
+            raise _error(request, "candidate_rollback_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(project.project_key, "import.candidate.rolled_back", "reference_candidate", str(candidate_id), {"reason": payload.reason, "request_id": _request_id(request)})
+        return {"data": result, "request_id": _request_id(request)}
+
+    @router.post("/import-batches/{batch_id}/rollback")
+    def rollback_import_batch(batch_id: int, payload: ImportReviewRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            require_project_access(current, project.project_key)
+        try:
+            from ..pipelines.v131_import import KnowledgeImportService
+            result = KnowledgeImportService(session_factory).rollback_batch(batch_id, payload.reason)
+        except (LookupError, ValueError) as error:
+            raise _error(request, "batch_rollback_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        write_import_audit(project.project_key, "import.batch.rolled_back", "import_batch", str(batch_id), {"reason": payload.reason, "request_id": _request_id(request)})
+        return {"data": result, "request_id": _request_id(request)}
+    @router.get("/import-batches/{batch_id}")
+    def import_batch_detail(batch_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            return {"data": {"id": batch.id, "project_id": batch.project_id, "status": batch.status, "scope_key": batch.scope_key, "source_type": batch.source_type, "source_count": batch.source_count, "processed_count": batch.processed_count, "document_count": batch.document_count, "chunk_count": batch.chunk_count, "error_count": batch.error_count, "retry_count": batch.retry_count, "error_message": batch.error_message, "created_at": _row_value(batch, "created_at"), "started_at": _row_value(batch, "started_at"), "completed_at": _row_value(batch, "completed_at"), "cancelled_at": _row_value(batch, "cancelled_at"), "rolled_back_at": _row_value(batch, "rolled_back_at")}, "request_id": _request_id(request)}
+
+    @router.post("/import-batches/{batch_id}:retry")
+    @router.post("/import-batches/{batch_id}/retry")
+    def retry_import_batch(batch_id: int, request: Request, payload: ImportBatchCreateRequest | None = None, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            if batch.status not in {"failed", "cancelled"}:
+                raise _error(request, "batch_not_retryable", "只有失败或已取消批次可以重试", status.HTTP_409_CONFLICT)
+            retry_count = int(batch.retry_count or 0) + 1
+        from ..pipelines.v131_import import ImportItem, KnowledgeImportService
+        service = KnowledgeImportService(session_factory)
+        if payload is None or payload.items is None:
+            try:
+                result = service.retry_batch(batch_id)
+            except (LookupError, ValueError) as error:
+                raise _error(request, "import_retry_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+            write_import_audit(project.project_key, "import.batch.retried", "import_batch", str(batch_id), {"mode": "async", "request_id": _request_id(request)})
+            return {"data": result, "request_id": _request_id(request)}
+        if not payload.items or len(payload.items) > 100:
+            raise _error(request, "invalid_import_items", "每批必须包含 1 至 100 个导入项", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            total_bytes = sum(_item_size(item) for item in payload.items)
+        except ValueError as error:
+            raise _error(request, "invalid_import_content", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        if total_bytes > 4 * 1024 * 1024:
+            raise _error(request, "import_too_large", "单批导入内容不能超过 4 MiB", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        if payload.project_key != project.project_key:
+            raise _error(request, "project_mismatch", "重试项目必须与原批次一致", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            result = service.import_items(
+                project.project_key,
+                [ImportItem(item.source_name, _item_content(item), item.source_type, item.metadata) for item in payload.items],
+                {**payload.metadata, "scope_key": payload.scope_key, "retry_of": batch_id, "retry_count": retry_count},
+            )
+        except (LookupError, ValueError, FileNotFoundError) as error:
+            raise _error(request, "import_retry_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        with session_factory() as session:
+            original = session.get(ImportBatchRow, batch_id)
+            if original is not None:
+                original.retry_count = retry_count
+                session.commit()
+        write_import_audit(project.project_key, "import.batch.retried", "import_batch", str(batch_id), {"new_batch_id": result.batch_id, "request_id": _request_id(request)})
+        return {"data": result.__dict__ | {"retry_of": batch_id}, "request_id": _request_id(request)}
+
+    @router.post("/import-batches/{batch_id}:cancel")
+    @router.post("/import-batches/{batch_id}/cancel")
+    def cancel_import_batch(batch_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        require_permission(current, "admin")
+        with session_factory() as session:
+            batch = session.get(ImportBatchRow, batch_id)
+            if batch is None:
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, batch.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            if batch.status in {"completed", "failed", "cancelled", "rolled_back"}:
+                raise _error(request, "batch_not_cancellable", "当前批次已经结束，不能取消", status.HTTP_409_CONFLICT)
+            batch.status = "cancelled"
+            batch.cancelled_at = datetime.now(timezone.utc)
+            for file in session.scalars(select(ImportFileRow).where(ImportFileRow.import_batch_id == batch.id)).all():
+                if file.status in {"uploaded", "queued", "processing"}:
+                    file.status = "cancelled"
+            for event in session.scalars(select(OutboxEventRow).where(OutboxEventRow.project_id == batch.project_id, OutboxEventRow.event_type == "document.imported.v1")).all():
+                if (event.payload or {}).get("import_batch_id") == batch.id and event.status in {"pending", "retry_wait", "dispatched"}:
+                    event.status = "cancelled"
+                    event.locked_by = None
+                    event.locked_at = None
+                    event.lease_expires_at = None
+            for job in session.scalars(select(ProcessingJobRow).where(ProcessingJobRow.project_id == batch.project_id, ProcessingJobRow.job_type == "parse_document")).all():
+                if (job.payload or {}).get("import_batch_id") == batch.id and job.status in {"pending", "retry_wait", "running"}:
+                    job.status = "cancelled"
+                    job.cancelled_at = datetime.now(timezone.utc)
+                    job.cancel_reason = "import batch cancelled"
+                    job.locked_by = None
+                    job.locked_at = None
+                    job.heartbeat_at = None
+                    job.lease_expires_at = None
+                    if job.outbox_event_id:
+                        event = session.get(OutboxEventRow, job.outbox_event_id)
+                        if event is not None:
+                            event.status = "cancelled"
+                            event.locked_by = None
+                            event.locked_at = None
+                            event.lease_expires_at = None
+            session.add(AuditLogRow(project_id=project.id, event_type="import.batch.cancelled", subject_type="import_batch", subject_id=str(batch.id), metadata_json={"request_id": _request_id(request)}))
+            session.commit()
+            return {"data": {"id": batch.id, "status": batch.status, "cancelled_at": _row_value(batch, "cancelled_at")}, "request_id": _request_id(request)}
     @router.get("/system/status")
     def system_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         try:

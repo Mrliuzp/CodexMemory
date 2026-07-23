@@ -17,8 +17,8 @@ def upgrade() -> None:
     if not sa.inspect(bind).has_table("import_batches"):
         op.create_table(
             "import_batches",
-            sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), primary_key=True),
-            sa.Column("project_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("id", sa.BigInteger(), primary_key=True),
+            sa.Column("project_id", sa.BigInteger(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
             sa.Column("status", sa.String(20), nullable=False, server_default="pending"),
             sa.Column("source_type", sa.String(32), nullable=False),
             sa.Column("source_count", sa.Integer(), nullable=False, server_default="0"),
@@ -35,9 +35,9 @@ def upgrade() -> None:
     if not sa.inspect(bind).has_table("source_documents"):
         op.create_table(
             "source_documents",
-            sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), primary_key=True),
-            sa.Column("project_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
-            sa.Column("import_batch_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("import_batches.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("id", sa.BigInteger(), primary_key=True),
+            sa.Column("project_id", sa.BigInteger(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("import_batch_id", sa.BigInteger(), sa.ForeignKey("import_batches.id", ondelete="RESTRICT"), nullable=False),
             sa.Column("source_name", sa.String(500), nullable=False),
             sa.Column("source_type", sa.String(32), nullable=False),
             sa.Column("content_hash", sa.String(64), nullable=False),
@@ -55,9 +55,9 @@ def upgrade() -> None:
     if not sa.inspect(bind).has_table("document_chunks"):
         op.create_table(
             "document_chunks",
-            sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), primary_key=True),
-            sa.Column("project_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
-            sa.Column("document_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("id", sa.BigInteger(), primary_key=True),
+            sa.Column("project_id", sa.BigInteger(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("document_id", sa.BigInteger(), sa.ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False),
             sa.Column("chunk_index", sa.Integer(), nullable=False),
             sa.Column("heading", sa.String(500)),
             sa.Column("content", sa.Text(), nullable=False),
@@ -72,10 +72,10 @@ def upgrade() -> None:
     if not sa.inspect(bind).has_table("reference_candidates"):
         op.create_table(
             "reference_candidates",
-            sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), primary_key=True),
-            sa.Column("project_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
-            sa.Column("document_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("source_documents.id", ondelete="RESTRICT"), nullable=False),
-            sa.Column("chunk_id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.ForeignKey("document_chunks.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("id", sa.BigInteger(), primary_key=True),
+            sa.Column("project_id", sa.BigInteger(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("document_id", sa.BigInteger(), sa.ForeignKey("source_documents.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("chunk_id", sa.BigInteger(), sa.ForeignKey("document_chunks.id", ondelete="RESTRICT"), nullable=False),
             sa.Column("title", sa.String(300)),
             sa.Column("content", sa.JSON(), nullable=False, server_default="{}"),
             sa.Column("status", sa.String(24), nullable=False, server_default="pending_review"),

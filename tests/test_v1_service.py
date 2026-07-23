@@ -5,11 +5,11 @@ import pytest
 
 def test_append_returns_existing_message_for_duplicate_event_key() -> None:
     from codex_memory.auth import Principal
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ProjectRow
     from codex_memory.v1_service import V1MemoryService
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     session_factory = create_session_factory(engine)
     with session_factory() as session:
@@ -28,11 +28,11 @@ def test_append_returns_existing_message_for_duplicate_event_key() -> None:
 
 def test_append_rejects_another_projects_principal() -> None:
     from codex_memory.auth import Principal, ProjectAccessDenied
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ProjectRow
     from codex_memory.v1_service import V1MemoryService
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     session_factory = create_session_factory(engine)
     with session_factory() as session:

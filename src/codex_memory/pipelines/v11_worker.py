@@ -21,8 +21,9 @@ class JobClaim:
     lease_expires_at: datetime
 
 
+
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 class OutboxDispatcher:
@@ -107,6 +108,8 @@ class OutboxDispatcher:
         project = session.get(ProjectRow, event.project_id)
         if project is None:
             return event.event_type, None, event.idempotency_key, event.idempotency_key
+        if event.event_type == "document.imported.v1":
+            return "parse_document", "knowledge-import-v1", event.idempotency_key, event.idempotency_key or legacy_key
         if event.event_type == "message.appended.v1":
             operation = "extract_memory_candidate"
             handler_version = "memory-extractor-v1"
@@ -151,7 +154,7 @@ class V11JobWorker:
             query = (
                 select(ProcessingJobRow)
                 .where(
-                    ProcessingJobRow.status.in_([ "pending", "retry_wait" ]),
+                    ProcessingJobRow.status.in_(["pending", "retry_wait"]),
                     ProcessingJobRow.next_attempt_at <= now,
                     or_(ProcessingJobRow.lease_expires_at.is_(None), ProcessingJobRow.lease_expires_at <= now),
                 )
@@ -161,9 +164,8 @@ class V11JobWorker:
                     ProcessingJobRow.id,
                 )
                 .limit(limit)
+                .with_for_update(skip_locked=True)
             )
-            if session.bind is not None and session.bind.dialect.name == "postgresql":
-                query = query.with_for_update(skip_locked=True)
             jobs = session.scalars(query).all()
             for job in jobs:
                 job.attempt_count = (job.attempt_count or 0) + 1

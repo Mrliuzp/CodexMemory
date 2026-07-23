@@ -4,17 +4,13 @@ import argparse
 import json
 import logging
 import os
+import uuid
 
-from .http_api import create_app
-from .jobs import LayeringJobRunner, ReflectionJobRunner
-from .mcp_server import create_server as create_mcp_server
 from .models import Layer
-from .service import MemoryService
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="codex-memory")
-    parser.add_argument("--db", default="memory.db")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="初始化项目接入配置。")
@@ -87,7 +83,7 @@ def main() -> None:
 
     serve = subparsers.add_parser("serve", help="Start the HTTP API server.")
     serve.add_argument("--host", default=os.environ.get("CODEX_MEMORY_HTTP_HOST", "127.0.0.1"))
-    serve.add_argument("--port", type=int, default=int(os.environ.get("CODEX_MEMORY_HTTP_PORT", "8765")))
+    serve.add_argument("--port", type=int, default=int(os.environ.get("CODEX_MEMORY_HTTP_PORT", "8000")))
     serve.add_argument("--reload", action="store_true")
 
     mcp = subparsers.add_parser("mcp", help="Start the MCP server.")
@@ -166,185 +162,82 @@ def main() -> None:
         from .db import create_engine_from_url, create_session_factory
         from .v131_import import KnowledgeImportService
 
-        database_url = os.environ.get("CODEX_MEMORY_DATABASE_URL", f"sqlite:///{os.path.abspath(args.db)}")
+        database_url = Settings.from_env().database_url
         result = KnowledgeImportService(create_session_factory(create_engine_from_url(database_url))).import_paths(args.project, args.paths)
         print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
         return
 
-    service = MemoryService(args.db)
+    from .api_client import MemoryApiClient
 
-    if args.command == "append":
-        raw_id = service.append_conversation(
-            project_id=args.project,
-            conversation_id=args.conversation,
-            role=args.role,
-            content=args.content,
-            metadata=args.metadata_json,
-            process_now=args.process_now and not args.async_process,
-            enqueue_async=args.enqueue_worker or args.async_process,
-        )
-        if args.enqueue_worker or args.async_process:
-            service.drain_async_processor()
-            service.stop_async_processor()
-        print(json.dumps({"raw_log_id": raw_id}, ensure_ascii=False))
-        return
-
-    if args.command == "retrieve":
-        results = service.retrieve(
-            args.project,
-            args.query,
-            tags=args.tag or None,
-            modules=args.module or None,
-            type_tags=args.tag_type or None,
-            layers=args.layer or None,
-            memory_types=args.memory_type or None,
-            limit=args.limit,
-        )
-        print(
-            json.dumps(
-                [
-                    {
-                        "id": result.item.id,
-                        "project_id": result.item.project_id,
-                        "layer": result.item.layer.value,
-                        "title": result.item.title,
-                        "memory_type": result.item.memory_type,
-                        "score": result.score,
-                    }
-                    for result in results
-                ],
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return
-
-    if args.command == "context":
-        if not args.skip_pending:
-            service.process_project_pending_memories(args.project)
-        print(
-            service.build_context(
-                args.project,
-                args.task,
-                tags=args.tag or None,
-                modules=args.module or None,
-                type_tags=args.tag_type or None,
-                layers=args.layer or None,
-                memory_types=args.memory_type or None,
-                limit=args.limit,
-            )
-        )
-        return
-
-    if args.command == "reflect":
-        print(json.dumps(service.run_reflection(args.project), ensure_ascii=False))
-        return
-
-    if args.command == "reflect-job":
-        runner = ReflectionJobRunner(
-            service=service,
-            project_ids=args.project,
-            interval_seconds=args.interval,
-        )
-        if args.forever:
-            runner.run_forever()
-            return
-        print(json.dumps(runner.run_iterations(args.iterations), ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "process-job":
-        runner = LayeringJobRunner(
-            service=service,
-            interval_seconds=args.interval,
-        )
-        if args.forever:
-            runner.run_forever()
-            return
-        print(json.dumps(runner.run_iterations(args.iterations), ensure_ascii=False, indent=2))
-        return
+    api_url = os.environ.get("CODEX_MEMORY_API_URL", "http://127.0.0.1:8000")
+    api_token = os.environ.get("CODEX_MEMORY_API_TOKEN", "")
 
     if args.command == "serve":
         import uvicorn
+        from .config import Settings
+        from .db import create_engine_from_url, create_session_factory
+        from .http_api import create_v1_app
 
+        settings = Settings.from_env()
+        app = create_v1_app(create_session_factory(create_engine_from_url(settings.database_url)))
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-        print(f"HTTP service listening at http://{args.host}:{args.port}")
-        print("Request logs will stream to this console.")
-        uvicorn.run(
-            create_app(args.db),
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            log_level="info",
-        )
+        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, log_level="info")
         return
 
     if args.command == "mcp":
-        print("MCP server starting. Use stdin/stdout for tool calls.")
-        create_mcp_server(args.db).run(transport=args.transport)
+        from .mcp_server import create_v1_server
+
+        create_v1_server(MemoryApiClient(api_url, api_token)).run(transport=args.transport)
         return
 
-    if args.command == "reports":
-        print(json.dumps(service.list_reflection_reports(args.project), ensure_ascii=False, indent=2))
-        return
+    if not api_token:
+        raise SystemExit("必须设置 CODEX_MEMORY_API_TOKEN 才能调用正式 API")
+    client = MemoryApiClient(api_url, api_token)
 
-    if args.command == "raw-logs":
-        print(json.dumps(service.list_raw_logs(args.project), ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "jobs":
-        print(json.dumps(service.list_processing_jobs(args.project), ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "promote-global":
-        print(
-            json.dumps(
-                service.promote_to_global_l2(
-                    project_id=args.project,
-                    memory_id=args.memory_id,
-                    reviewer=args.reviewer,
-                    reason=args.reason,
-                ),
-                ensure_ascii=False,
-                indent=2,
-            )
+    if args.command == "append":
+        result = client.post(
+            "/api/v1/append",
+            {
+                "project_key": args.project,
+                "session_key": args.conversation,
+                "event_key": f"cli:{args.conversation}:{uuid.uuid4()}",
+                "role": args.role,
+                "content": args.content,
+                "source": "cli",
+                "metadata": args.metadata_json or {},
+            },
         )
-        return
-
-    if args.command == "export":
-        print(json.dumps(service.export_project_audit(args.project), ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "rebuild":
-        print(json.dumps(service.rebuild_project_from_l0(args.project), ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "retry-failed":
-        print(json.dumps({"retried": service.retry_failed_layering_jobs(args.project)}, ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "reset-stale-running":
-        print(
-            json.dumps(
-                {
-                    "reset": service.reset_stale_running_layering_jobs(
-                        args.project,
-                        older_than_minutes=args.older_than_minutes,
-                    )
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
+    elif args.command == "retrieve":
+        result = client.post(
+            "/api/v1/search",
+            {
+                "project_key": args.project,
+                "query": args.query,
+                "layers": [layer.value for layer in args.layer],
+                "memory_types": args.memory_type,
+                "limit": args.limit,
+            },
         )
-        return
+    elif args.command == "context":
+        result = client.post(
+            "/api/v1/context",
+            {
+                "project_key": args.project,
+                "task": args.task,
+                "layers": [layer.value for layer in args.layer],
+                "memory_types": args.memory_type,
+                "limit": args.limit,
+                "skip_pending": args.skip_pending,
+            },
+        )
+    elif args.command == "reflect":
+        result = client.post("/api/v1/reflect", {"project_key": args.project})
+    elif args.command == "health":
+        result = client.get("/api/v1/health")
+    else:
+        raise SystemExit(f"命令 {args.command} 属于已删除的旧本地运行时，请使用正式 API 或管理后台")
 
-    if args.command == "health":
-        print(json.dumps(service.health_status(), ensure_ascii=False, indent=2))
-        return
-
-    if args.command == "process":
-        print(json.dumps({"created": service.process_pending_memories()}, ensure_ascii=False))
-        return
-
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 def parse_layer(value: str) -> Layer:
     return Layer(value.upper())
