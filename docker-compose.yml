@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-codex_memory}
+      POSTGRES_USER: ${POSTGRES_USER:-codex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    command: ["sh", "-c", "alembic upgrade head && python -m codex_memory.bootstrap --project-key \"$${CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY}\" --project-name \"$${CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME}\" --token \"$${CODEX_MEMORY_SERVICE_TOKEN}\" && uvicorn codex_memory.v1_app:app --host 0.0.0.0 --port 8000"]
+    environment:
+      CODEX_MEMORY_DATABASE_URL: ${CODEX_MEMORY_DATABASE_URL}
+      CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY: ${CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY}
+      CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME: ${CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME}
+      CODEX_MEMORY_SERVICE_TOKEN: ${CODEX_MEMORY_SERVICE_TOKEN}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mcp:
+    build: .
+    command: ["python", "-m", "codex_memory.v1_mcp"]
+    environment:
+      CODEX_MEMORY_API_URL: http://api:8000
+      CODEX_MEMORY_API_TOKEN: ${CODEX_MEMORY_SERVICE_TOKEN}
+    ports:
+      - "8001:8001"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "-m", "codex_memory.worker", "--schedule", "02:00"]
+    environment:
+      CODEX_MEMORY_DATABASE_URL: ${CODEX_MEMORY_DATABASE_URL}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,18 @@
+.venv/
+.codex-python/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local SQLite data and its transient files.
+*.db
+*.db-shm
+*.db-wal
+
+# Editor and operating system files.
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+*.egg-info/
+.env
