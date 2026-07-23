@@ -275,6 +275,7 @@ class V1MemoryService:
             context_budget_tokens=context_budget_tokens,
         )
     def create_l1_memory(
+        self,
         principal: Principal,
         project_key: str,
         memory_type: str,

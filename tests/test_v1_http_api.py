@@ -59,6 +59,17 @@ def test_v1_memory_rejects_direct_l2_write() -> None:
     assert response.status_code == 422
 
 
+def test_v1_memory_creates_l1_memory() -> None:
+    response = _client().post(
+        "/api/v1/memory",
+        headers={"Authorization": "Bearer secret"},
+        json={"project_key": "erp", "type": "project_overview", "title": "项目概览", "content": {"text": "使用 MCP 写入项目知识"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["level"] == "L1"
+
+
 def test_v1_append_rejects_event_key_with_different_content() -> None:
     client = _client()
     headers = {"Authorization": "Bearer secret"}

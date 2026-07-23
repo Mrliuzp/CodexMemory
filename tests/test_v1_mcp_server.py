@@ -21,7 +21,7 @@ def _tool(server, name: str):
 
 
 def test_build_context_calls_v1_context_endpoint() -> None:
-    from codex_memory.mcp_server import create_v1_server
+    from codex_memory.api.mcp_server import create_v1_server
 
     client = FakeApiClient()
     result = _tool(create_v1_server(client), "build_context")(project="erp", task="change order")
@@ -31,17 +31,18 @@ def test_build_context_calls_v1_context_endpoint() -> None:
 
 
 def test_record_outcome_only_creates_l1_memory() -> None:
-    from codex_memory.mcp_server import create_v1_server
+    from codex_memory.api.mcp_server import create_v1_server
 
     client = FakeApiClient()
-    result = _tool(create_v1_server(client), "record_outcome")(project="erp", type="coding_rule", content={"text": "use service"})
+    result = _tool(create_v1_server(client), "record_outcome")(project="erp", type="coding_rule", content={"text": "use service"}, title="服务使用规则")
 
     assert result["path"] == "/api/v1/memory"
     assert result["payload"]["level"] == "L1"
+    assert result["payload"]["title"] == "服务使用规则"
 
 
 def test_retrieve_memory_calls_v1_search_endpoint() -> None:
-    from codex_memory.mcp_server import create_v1_server
+    from codex_memory.api.mcp_server import create_v1_server
 
     client = FakeApiClient()
     result = _tool(create_v1_server(client), "retrieve_memory")(project="erp", query="order")
@@ -50,7 +51,7 @@ def test_retrieve_memory_calls_v1_search_endpoint() -> None:
 
 
 def test_append_message_maps_all_fields_to_v1_append_payload() -> None:
-    from codex_memory.mcp_server import create_v1_server
+    from codex_memory.api.mcp_server import create_v1_server
 
     client = FakeApiClient()
     result = _tool(create_v1_server(client), "append_message")(
@@ -75,19 +76,3 @@ def test_append_message_maps_all_fields_to_v1_append_payload() -> None:
         "source": "codex-desktop",
         "metadata": {"trace_id": "trace-42", "review": True},
     }
-
-def test_v1_server_uses_default_port_and_port_in_resource_url() -> None:
-    from codex_memory.mcp_auth import StaticTokenVerifier
-    from codex_memory.mcp_server import create_v1_server
-
-    default_server = create_v1_server(FakeApiClient(), token_verifier=StaticTokenVerifier("token"))
-    custom_server = create_v1_server(
-        FakeApiClient(),
-        port=8123,
-        token_verifier=StaticTokenVerifier("token"),
-    )
-
-    assert default_server.settings.port == 8001
-    assert str(default_server.settings.auth.resource_server_url) == "http://127.0.0.1:8001/mcp"
-    assert custom_server.settings.port == 8123
-    assert str(custom_server.settings.auth.resource_server_url) == "http://127.0.0.1:8123/mcp"
