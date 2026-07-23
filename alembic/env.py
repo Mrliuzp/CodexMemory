@@ -10,8 +10,11 @@ from codex_memory.db_models import Base
 
 
 config = context.config
-if os.environ.get("CODEX_MEMORY_DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", os.environ["CODEX_MEMORY_DATABASE_URL"])
+environment_url = os.environ.get("CODEX_MEMORY_DATABASE_URL")
+configured_url = config.get_main_option("sqlalchemy.url")
+default_url = "postgresql+psycopg://codex_memory:codex_memory@127.0.0.1:5432/codex_memory"
+if environment_url and configured_url == default_url:
+    config.set_main_option("sqlalchemy.url", environment_url)
 target_metadata = Base.metadata
 
 

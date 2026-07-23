@@ -6,11 +6,11 @@ from fastapi.testclient import TestClient
 
 
 def test_admin_flags_profiles_and_health_are_project_scoped() -> None:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ApiKeyRow, ProjectRow, V11Base
     from codex_memory.http_api import create_v1_app
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     factory = create_session_factory(engine)
@@ -63,7 +63,7 @@ def test_admin_jobs_retry_and_shadow_candidate_visibility() -> None:
     import hashlib
 
     from sqlalchemy import select
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import (
         ApiKeyRow,
         MemoryCandidateRow,
@@ -73,7 +73,7 @@ def test_admin_jobs_retry_and_shadow_candidate_visibility() -> None:
     )
     from codex_memory.http_api import create_v1_app
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     factory = create_session_factory(engine)

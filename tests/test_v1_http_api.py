@@ -6,11 +6,11 @@ from fastapi.testclient import TestClient
 
 
 def _client() -> TestClient:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ApiKeyRow, ProjectRow
     from codex_memory.http_api import create_v1_app
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     session_factory = create_session_factory(engine)
     with session_factory() as session:

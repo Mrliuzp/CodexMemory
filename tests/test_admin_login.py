@@ -5,14 +5,14 @@ from fastapi.testclient import TestClient
 
 
 def _client(monkeypatch) -> TestClient:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.http_api import create_v1_app
     from codex_memory.v11_models import V11Base
 
     monkeypatch.setenv("CODEX_MEMORY_ADMIN_USERNAME", "memory-admin")
     monkeypatch.setenv("CODEX_MEMORY_ADMIN_PASSWORD", "correct-password")
     monkeypatch.setenv("CODEX_MEMORY_ADMIN_SESSION_SECRET", "test-session-secret")
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     return TestClient(create_v1_app(create_session_factory(engine)))

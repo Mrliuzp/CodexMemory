@@ -7,10 +7,10 @@ from sqlalchemy import select
 
 
 def _client_and_factory():
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ApiKeyRow, ProjectRow, V11Base
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     factory = create_session_factory(engine)

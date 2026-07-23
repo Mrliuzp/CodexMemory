@@ -35,8 +35,8 @@ def _alembic_config(database_url: str) -> Config:
     return config
 
 
-def test_v11_models_are_additive_and_sqlite_compatible() -> None:
-    from codex_memory.db import create_schema, create_sqlite_engine, create_session_factory
+def test_v11_models_are_additive_and_postgresql_compatible() -> None:
+    from codex_memory.db import create_schema, create_postgres_test_engine, create_session_factory
     from codex_memory.db_models import (
         Base,
         EmbeddingProfileRow,
@@ -48,7 +48,7 @@ def test_v11_models_are_additive_and_sqlite_compatible() -> None:
         V11Base,
     )
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     tables = set(inspect(engine).get_table_names())
@@ -106,8 +106,11 @@ def test_v11_models_are_additive_and_sqlite_compatible() -> None:
         assert policy.failure_mode == "fail_closed"
 
 
-def test_v11_migrations_upgrade_sqlite_and_keep_legacy_embedding_table(tmp_path) -> None:
-    database_url = f"sqlite:///{tmp_path / 'v11.db'}"
+def test_v11_migrations_upgrade_postgresql_and_keep_legacy_embedding_table() -> None:
+    from codex_memory.db import create_postgres_test_engine
+
+    engine = create_postgres_test_engine()
+    database_url = engine.url.render_as_string(hide_password=False)
     command.upgrade(_alembic_config(database_url), "head")
 
     engine = create_engine(database_url)

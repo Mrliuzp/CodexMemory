@@ -2,6 +2,25 @@
 
 更新时间：2026-07-12
 
+## V1.3 本期进展（2026-07-16）
+
+### V1.3.0 异步闭环
+
+已完成：统一幂等契约、Outbox 到 Processing Job 分发、单进程常驻 Worker、Handler 执行协议、租约恢复、重试/死信、Replay、Admin/Health 查询，以及 Compose 常驻 Worker 配置。
+
+### V1.3.1 Knowledge Import Pipeline
+
+已完成历史知识导入基础管线和治理闭环：新增 Import Batch/File/Issue、源文档、文档分块和 Reference Candidate 数据层；支持 Markdown、TXT、JSONL、JSON、SQL、源码、PDF、DOCX 和 ZIP（ZIP 具备路径穿越、文件数、成员大小、解压总量和嵌套层级限制）；按内容哈希去重；提供 `codex-memory import` 和 5175 历史知识导入页面。管理 API 已支持创建批次、上传不可变原文、启动 Outbox/Worker 异步解析、进度查询、取消、失败文件重试、候选审核发布和批次软回滚。所有导入实体显式记录 project_id/scope_id，提示注入内容隔离，常见凭据在候选层脱敏，批次和危险操作写入审计事件。已补充可配置的文件系统对象存储后端、跨请求/跨进程分片上传和 PDF 页级定位；数据库存储后端仍作为本地/测试实现。S3/MinIO 等远程对象存储适配器和 PDF 视觉布局保真仍属于后续增强。
+
+### V1.3.2 Codex 接入体验
+
+已完成最小接入闭环：`init`、`status`、`doctor`、`hook install` 和 `hook uninstall`；配置和凭据写入用户级目录，Hook 安装保持幂等并保留已有配置。
+
+### 本轮验证
+
+- V1.3.1/V1.3.2 定向测试：已通过。
+- 全量回归、静态检查和 Compose 配置校验：在本轮全部改动完成后重新执行。
+
 ## 当前状态
 
 V1.1 纵向能力切片已在 SQLite 和 PostgreSQL 上完整实现并验证。未启用 V1.1 数据库结构时，原有 V1 行为保持不变。

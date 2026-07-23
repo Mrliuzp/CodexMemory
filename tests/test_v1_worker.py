@@ -3,11 +3,11 @@ from __future__ import annotations
 
 def _worker_service():
     from codex_memory.auth import Principal
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ProjectRow
     from codex_memory.v1_service import V1MemoryService
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     factory = create_session_factory(engine)
     with factory() as session:

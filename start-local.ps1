@@ -20,7 +20,7 @@ $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 $srcPath = Join-Path $root "src"
 $installStamp = Join-Path $root ".venv\.codex-install.stamp"
 $defaultHost = if ($env:CODEX_MEMORY_HTTP_HOST) { $env:CODEX_MEMORY_HTTP_HOST } else { "127.0.0.1" }
-$defaultPort = if ($env:CODEX_MEMORY_HTTP_PORT) { [int]$env:CODEX_MEMORY_HTTP_PORT } else { 8765 }
+$defaultPort = if ($env:CODEX_MEMORY_HTTP_PORT) { [int]$env:CODEX_MEMORY_HTTP_PORT } else { 8000 }
 
 if ($env:PYTHONPATH) {
     if ($env:PYTHONPATH -notlike "*$srcPath*") {
@@ -124,7 +124,7 @@ if ($Command.Count -eq 0) {
 
     Write-Host "Starting Codex Memory HTTP service at $serviceUrl"
     Write-Host "Request logs will stream to this console."
-    & $venvPython -m codex_memory.cli --db .\memory.db serve --host $defaultHost --port $defaultPort
+    & $venvPython -m codex_memory.cli serve --host $defaultHost --port $defaultPort
     exit $LASTEXITCODE
 }
 

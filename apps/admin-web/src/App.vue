@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { DataAnalysis, Collection, Menu, Monitor, Notebook, SwitchButton, UserFilled } from '@element-plus/icons-vue'
+import { Collection, Menu, Monitor, Notebook, SwitchButton, Upload, UserFilled } from '@element-plus/icons-vue'
 import { adminGet } from './api'
 import { useSessionStore } from './stores/session'
 
@@ -13,7 +13,7 @@ const nav = [
   { to: '/dashboard', label: '运行概览', icon: Monitor },
   { to: '/projects', label: '项目与作用域', icon: Collection },
   { to: '/records', label: '只读数据', icon: Notebook },
-  { to: '/system-status', label: '\u8fd0\u884c\u72b6\u6001', icon: DataAnalysis },
+  { to: '/imports', label: '历史知识导入', icon: Upload },
 ]
 const title = computed(() => route.meta.label || 'Codex Memory 管理后台')
 const isLoginPage = computed(() => route.name === 'login')
@@ -47,7 +47,7 @@ onMounted(verifySession)
       <el-menu :default-active="route.path" router class="nav">
         <el-menu-item v-for="item in nav" :key="item.to" :index="item.to"><el-icon><component :is="item.icon" /></el-icon><span>{{ item.label }}</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-foot"><el-icon><Menu /></el-icon><span>V1.2 · P0 只读模式</span></div>
+      <div class="sidebar-foot"><el-icon><Menu /></el-icon><span>V1.3 · 导入与审核</span></div>
     </el-aside>
     <el-container>
       <el-header class="topbar"><div><span class="eyebrow">管理 / 观测</span><h1>{{ title }}</h1></div><div class="user-menu"><el-icon><UserFilled /></el-icon><span>{{ displayName }}</span><el-button text @click="logout"><el-icon><SwitchButton /></el-icon>退出登录</el-button></div></el-header>

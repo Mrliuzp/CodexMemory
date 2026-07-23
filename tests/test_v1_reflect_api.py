@@ -6,12 +6,12 @@ from fastapi.testclient import TestClient
 
 
 def test_reflect_endpoint_runs_project_reflection() -> None:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
     from codex_memory.db_models import ApiKeyRow, ProjectRow
     from codex_memory.http_api import create_v1_app
     from codex_memory.v1_service import V1MemoryService
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     factory = create_session_factory(engine)
     with factory() as session:
