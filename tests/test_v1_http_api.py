@@ -57,3 +57,22 @@ def test_v1_memory_rejects_direct_l2_write() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_v1_append_rejects_event_key_with_different_content() -> None:
+    client = _client()
+    headers = {"Authorization": "Bearer secret"}
+    first = client.post(
+        "/api/v1/append",
+        headers=headers,
+        json={"project_key": "erp", "session_key": "s1", "event_key": "e1", "role": "user", "content": "original"},
+    )
+    conflict = client.post(
+        "/api/v1/append",
+        headers=headers,
+        json={"project_key": "erp", "session_key": "s1", "event_key": "e1", "role": "user", "content": "changed"},
+    )
+
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert conflict.json()["error"] == "event_key_conflict"

@@ -141,7 +141,7 @@ class MemoryService:
     ) -> dict[str, Any]:
         memory = self.store.get_memory(memory_id)
         if memory is None:
-            raise ValueError(f"memory not found: {memory_id}")
+            raise ValueError(f"记忆不存在：{memory_id}")
         if memory.project_id != project_id:
             raise ValueError("memory does not belong to the requested project")
         if memory.layer != Layer.L2:

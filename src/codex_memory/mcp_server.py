@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 
+from .mcp_auth import MCP_REQUIRED_SCOPES
 from .models import Layer
 from .service import MemoryService
 
@@ -120,13 +123,34 @@ def create_server(db_path: str | Path = "memory.db") -> FastMCP:
 def run_server(db_path: str | Path = "memory.db", transport: str = "stdio") -> None:
     create_server(db_path).run(transport=transport)
 
-def create_v1_server(api_client: Any, host: str = "127.0.0.1", port: int = 8000) -> FastMCP:
+def create_v1_server(
+    api_client: Any,
+    host: str = "127.0.0.1",
+    port: int = 8001,
+    token_verifier: TokenVerifier | None = None,
+) -> FastMCP:
     """Create the HTTP-backed MCP surface used by deployed Codex clients."""
-    server = FastMCP("Codex Memory V1 MCP", host=host, port=port, stateless_http=True)
+    auth = None
+    if token_verifier is not None:
+        auth = AuthSettings(
+            issuer_url=f"http://127.0.0.1:{port}",
+            resource_server_url=f"http://127.0.0.1:{port}/mcp",
+            required_scopes=MCP_REQUIRED_SCOPES,
+        )
+    server = FastMCP(
+        "Codex Memory V1 MCP",
+        host=host,
+        port=port,
+        stateless_http=True,
+        token_verifier=token_verifier,
+        auth=auth,
+    )
 
     @server.tool()
-    def build_context(project: str, task: str) -> dict[str, Any]:
-        return api_client.post("/api/v1/context", {"project_key": project, "task": task})
+    def build_context(project: str, task: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {"project_key": project, "task": task}
+        payload.update(filters or {})
+        return api_client.post("/api/v1/context", payload)
 
     @server.tool()
     def retrieve_memory(project: str, query: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -139,6 +163,31 @@ def create_v1_server(api_client: Any, host: str = "127.0.0.1", port: int = 8000)
         return api_client.post(
             "/api/v1/memory",
             {"project_key": project, "level": "L1", "type": type, "content": content},
+        )
+
+    @server.tool()
+    def append_message(
+        project: str,
+        session: str,
+        event: str,
+        role: Literal["user", "assistant", "system"],
+        content: str,
+        occurred_at: str | None = None,
+        source: str = "skill",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return api_client.post(
+            "/api/v1/append",
+            {
+                "project_key": project,
+                "session_key": session,
+                "event_key": event,
+                "role": role,
+                "content": content,
+                "occurred_at": occurred_at,
+                "source": source,
+                "metadata": metadata or {},
+            },
         )
 
     @server.tool()

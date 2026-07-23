@@ -1,0 +1,5 @@
+interface:
+  display_name: "Codex Memory 自动归档"
+  short_description: "按项目约束检索并归档本地知识"
+policy:
+  allow_implicit_invocation: true

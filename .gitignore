@@ -16,3 +16,6 @@ Thumbs.db
 .DS_Store
 *.egg-info/
 .env
+# Frontend dependencies and build output.
+apps/admin-web/node_modules/
+apps/admin-web/dist/

@@ -54,7 +54,7 @@ PostgreSQL 使用 pgvector/pgvector:pg16。迁移会创建 vector 扩展、向�
 
 ### 4. V1 HTTP API
 
-API 端口：8000。
+API 容器内部端口为 8000；Compose 部署不发布该端口，对外统一经 `http://127.0.0.1:5174/api/` 访问。
 
 | 方法 | 路径 | 功能 |
 | --- | --- | --- |
@@ -176,7 +176,7 @@ CODEX_MEMORY_BOOTSTRAP_PROJECT_NAME=<项目名称>
 docker info
 docker compose up -d --build
 docker compose ps
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 docker compose logs -f api mcp worker
 ~~~
 

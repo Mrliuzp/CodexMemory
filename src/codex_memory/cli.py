@@ -1,20 +1,32 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
 import logging
 import os
+import sys
 
+from .codex_hooks import handle_assistant_stop, handle_user_prompt, replay_outbox
+from .db import create_engine_from_url, create_schema, create_session_factory, create_sqlite_engine
+from .doctor import doctor_exit_code, run_doctor
+from .hook_client import PermanentHookError
 from .http_api import create_app
 from .jobs import LayeringJobRunner, ReflectionJobRunner
+from .migration_backup import BackupManifestError, backup_sqlite, verify_backup_manifest
+from .migration_inventory import inventory_source
+from .migration_import import MigrationImporter
+from .migration_verify import verify_migration
 from .mcp_server import create_server as create_mcp_server
 from .models import Layer
+from .project_config import ProjectConfigError
+from .runtime_health import build_readiness
 from .service import MemoryService
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="codex-memory")
     parser.add_argument("--db", default="memory.db")
+    parser.add_argument("--database-url", help="迁移与校验使用的既有目标数据库 URL。")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     append = subparsers.add_parser("append", help="Append one raw L0 conversation message.")
@@ -67,6 +79,36 @@ def main() -> None:
     serve.add_argument("--port", type=int, default=int(os.environ.get("CODEX_MEMORY_HTTP_PORT", "8765")))
     serve.add_argument("--reload", action="store_true")
 
+    doctor = subparsers.add_parser("doctor", help="诊断 Codex Memory 全局接入状态。")
+    doctor.add_argument("--cwd", default=os.getcwd())
+    doctor.add_argument("--json", action="store_true")
+
+    subparsers.add_parser("hook-user", help="\u5f52\u6863 UserPromptSubmit Hook \u4e8b\u4ef6\u3002")
+    subparsers.add_parser("hook-assistant", help="\u5f52\u6863 Stop Hook \u4e8b\u4ef6\u3002")
+    replay_outbox_parser = subparsers.add_parser("replay-outbox", help="\u91cd\u653e\u672c\u5730\u5f52\u6863\u961f\u5217\u3002")
+    replay_scope = replay_outbox_parser.add_mutually_exclusive_group(required=True)
+    replay_scope.add_argument("--project")
+    replay_scope.add_argument("--all", action="store_true")
+
+    inventory = subparsers.add_parser("inventory", help="Inventory a legacy SQLite source.")
+    inventory.add_argument("--source", required=True)
+    inventory.add_argument("--json", action="store_true")
+    backup = subparsers.add_parser("backup", help="Create a consistent SQLite backup.")
+    backup.add_argument("--source", required=True)
+    backup.add_argument("--destination", required=True)
+
+    migrate = subparsers.add_parser("migrate", help="Import a legacy SQLite backup.")
+    migrate.add_argument("--source", required=True)
+    migrate.add_argument("--project-map", required=True)
+    migrate.add_argument("--backup-manifest")
+    migrate_mode = migrate.add_mutually_exclusive_group(required=True)
+    migrate_mode.add_argument("--dry-run", action="store_true")
+    migrate_mode.add_argument("--apply", action="store_true")
+
+    verify_migration_parser = subparsers.add_parser("verify-migration", help="Verify a completed legacy migration.")
+    verify_migration_parser.add_argument("--source", required=True)
+    verify_migration_parser.add_argument("--batch-id", type=int, required=True)
+
     mcp = subparsers.add_parser("mcp", help="Start the MCP server.")
     mcp.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
 
@@ -91,7 +133,7 @@ def main() -> None:
     rebuild = subparsers.add_parser("rebuild", help="Rebuild project derived memories from L0.")
     rebuild.add_argument("--project", required=True)
 
-    retry_failed = subparsers.add_parser("retry-failed", help="Retry failed L0 processing jobs.")
+    retry_failed = subparsers.add_parser("retry-failed", help="重试失败的 L0 处理任务。")
     retry_failed.add_argument("--project", required=True)
 
     reset_stale = subparsers.add_parser("reset-stale-running", help="Reset stale running L0 jobs.")
@@ -102,6 +144,70 @@ def main() -> None:
     subparsers.add_parser("process", help="Process all pending L0 jobs.")
 
     args = parser.parse_args()
+    if args.command in {"hook-user", "hook-assistant"}:
+        try:
+            event = json.load(sys.stdin)
+            if not isinstance(event, dict):
+                raise ValueError("Hook \u8f93\u5165\u5fc5\u987b\u662f JSON \u5bf9\u8c61")
+            if args.command == "hook-user":
+                context_text = handle_user_prompt(event)
+                if context_text:
+                    print(context_text)
+            else:
+                result = handle_assistant_stop(event)
+                if result.error:
+                    print(f"Hook \u5f52\u6863\u5931\u8d25\uff1a{result.error}", file=sys.stderr)
+                    raise SystemExit(1)
+        except (json.JSONDecodeError, ValueError, ProjectConfigError, PermanentHookError) as error:
+            print(f"Hook \u6267\u884c\u5931\u8d25\uff1a{error}", file=sys.stderr)
+            raise SystemExit(2) from error
+        return
+    if args.command == "replay-outbox":
+        try:
+            report = replay_outbox(project_id=args.project if not args.all else None)
+        except PermanentHookError as error:
+            print(f"\u91cd\u653e\u961f\u5217\u5931\u8d25\uff1a{error}", file=sys.stderr)
+            raise SystemExit(2) from error
+        print(json.dumps(report.to_dict(), ensure_ascii=False))
+        return
+    if args.command == "inventory":
+        payload = inventory_source(args.source).public_dict()
+        print(json.dumps(payload, ensure_ascii=False, indent=2 if not args.json else None))
+        return
+    if args.command == "backup":
+        result = backup_sqlite(args.source, args.destination)
+        print(json.dumps({"source_sha256": result.source_sha256, "sha256": result.sha256, "destination": str(result.destination), "manifest": str(result.manifest_path)}, ensure_ascii=False))
+        return
+    if args.command == "migrate":
+        project_map = json.loads(args.project_map)
+        if not isinstance(project_map, dict):
+            raise SystemExit("--project-map must be a JSON object")
+        if args.dry_run:
+            print(json.dumps({"dry_run": True, "manifest": inventory_source(args.source).public_dict()}, ensure_ascii=False))
+            return
+        if not args.backup_manifest:
+            raise SystemExit("--apply requires a verified --backup-manifest")
+        try:
+            verify_backup_manifest(args.source, args.backup_manifest)
+        except BackupManifestError as error:
+            raise SystemExit(f"backup manifest verification failed: {error}") from error
+        session_factory = _migration_target_session_factory(args)
+        report = MigrationImporter(session_factory).import_batch(args.source, project_map)
+        print(json.dumps({"batch_id": report.batch_id, "messages": report.messages.__dict__, "sessions": report.sessions.__dict__, "memories": report.memories.__dict__, "memory_versions": report.memory_versions.__dict__, "memory_sources": report.memory_sources.__dict__, "issues": report.issues.by_code}, ensure_ascii=False))
+        return
+    if args.command == "verify-migration":
+        report = verify_migration(args.source, _migration_target_session_factory(args), args.batch_id)
+        print(json.dumps(report.to_dict(), ensure_ascii=False))
+        return
+    if args.command == "doctor":
+        report = run_doctor(args.cwd, runtime_checks=True)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False))
+        else:
+            for message in report["messages"]:
+                print(message)
+        raise SystemExit(doctor_exit_code(report))
+
     service = MemoryService(args.db)
 
     if args.command == "append":
@@ -277,6 +383,19 @@ def main() -> None:
         return
 
 
+
+def _migration_target_session_factory(args: argparse.Namespace):
+    if args.database_url:
+        engine = create_engine_from_url(args.database_url)
+        if engine.dialect.name == "postgresql":
+            readiness = build_readiness(create_session_factory(engine))
+            if readiness["status"] != "ok":
+                raise SystemExit("PostgreSQL target is not ready for migration")
+        return create_session_factory(engine)
+    engine = create_sqlite_engine(f"sqlite:///{args.db}")
+    create_schema(engine)
+    return create_session_factory(engine)
+
 def parse_layer(value: str) -> Layer:
     return Layer(value.upper())
 
@@ -285,9 +404,9 @@ def parse_json_object(value: str) -> dict:
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as error:
-        raise argparse.ArgumentTypeError(f"invalid JSON object: {error.msg}") from error
+        raise argparse.ArgumentTypeError(f"JSON 对象无效：{error.msg}") from error
     if not isinstance(parsed, dict):
-        raise argparse.ArgumentTypeError("metadata JSON must be an object")
+        raise argparse.ArgumentTypeError("metadata JSON 必须是对象（must be an object）")
     return parsed
 
 

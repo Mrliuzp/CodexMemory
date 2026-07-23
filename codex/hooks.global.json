@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "commandWindows": "python .codex/scripts/append_user.py",
+            "commandWindows": "\"%USERPROFILE%\\.codex\\codex-memory-runtime\\Scripts\\codex-memory.exe\" hook-user",
             "timeout": 5
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "commandWindows": "python .codex/scripts/append_assistant.py",
+            "commandWindows": "\"%USERPROFILE%\\.codex\\codex-memory-runtime\\Scripts\\codex-memory.exe\" hook-assistant",
             "timeout": 5
           }
         ]

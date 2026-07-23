@@ -6,12 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import hash_token
-from .config import Settings
+from .config import Settings, is_placeholder_value
 from .db import create_engine_from_url, create_session_factory
 from .db_models import ApiKeyRow, ProjectRow
 
 
-BOOTSTRAP_PERMISSIONS = ["append", "read", "memory_write"]
+BOOTSTRAP_PERMISSIONS = ["append", "read", "memory_write", "operations_read"]
 
 
 def ensure_bootstrap(
@@ -21,9 +21,9 @@ def ensure_bootstrap(
     project_name: str | None = None,
 ) -> None:
     if not project_key.strip():
-        raise ValueError("bootstrap project key must not be empty")
-    if not token.strip() or token == "change-me":
-        raise ValueError("bootstrap token must be configured with a non-placeholder value")
+        raise ValueError("引导项目键不能为空")
+    if is_placeholder_value(token):
+        raise ValueError("必须配置非占位符的引导令牌")
 
     token_hash = hash_token(token)
     with session_factory() as session:
@@ -36,9 +36,12 @@ def ensure_bootstrap(
         existing = session.scalar(select(ApiKeyRow).where(ApiKeyRow.token_hash == token_hash))
         if existing is not None:
             if existing.project_id != project.id:
-                raise ValueError("bootstrap token is already bound to another project")
+                raise ValueError("引导令牌已绑定到其他项目")
+            permissions = list(dict.fromkeys([*existing.permissions, *BOOTSTRAP_PERMISSIONS]))
+            if permissions != existing.permissions:
+                existing.permissions = permissions
+                session.commit()
             return
-
         session.add(
             ApiKeyRow(
                 project_id=project.id,

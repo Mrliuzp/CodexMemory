@@ -21,5 +21,5 @@ cd "G:\Codex Project\20260703-codex-memory-system"
 Copy-Item .env.example .env
 docker info
 docker compose up -d --build
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 ```

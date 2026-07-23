@@ -1,64 +1,64 @@
-# codex-memory V1.1 Implementation Plan
+# codex-memory V1.1 实施计划
 
-> **For agentic workers:** Use the V1.1 executable specification as the binding contract. Each Agent task must follow RED → GREEN → full verification → isolated commit.
+> **执行要求：** 以 V1.1 可执行规格作为绑定契约。每个 Agent 任务都必须遵循 RED → GREEN → 完整验证 → 独立提交。
 
-**Goal:** Upgrade the existing codex-memory V1 into a backward-compatible V1.1 with durable ingestion, candidate governance, deterministic hybrid retrieval, profile-versioned embeddings, and shadow-only LLM enrichment.
+**目标：** 在保持向后兼容的前提下，将现有 codex-memory V1 升级为具备持久化采集、候选治理、确定性混合检索、Profile 版本化 Embedding 和仅 shadow LLM 增强能力的 V1.1。
 
-**Architecture:** Keep Hook local JSONL outbox and add a server-side transactional outbox. Persist immutable L0 first, then process candidates, policy, publication, chunks, embeddings, and retrieval asynchronously. Dense retrieval is profile-isolated and always has lexical-only degradation.
+**架构：** 保留 Hook 本地 JSONL Outbox，并增加服务端事务 Outbox。先持久化不可变 L0，再异步处理候选、策略、发布、分块、Embedding 和检索。稠密检索按 Profile 隔离，并始终支持仅词法检索的降级模式。
 
-**Tech Stack:** Python 3.10+, SQLAlchemy 2, Alembic, FastAPI, PostgreSQL 16, pgvector, SQLite test path, pytest.
+**技术栈：** Python 3.10+、SQLAlchemy 2、Alembic、FastAPI、PostgreSQL 16、pgvector、SQLite 测试路径、pytest。
 
-## Global Constraints
+## 全局约束
 
-- Append never calls embedding or LLM synchronously.
-- UNIQUE(project_id,event_key); same hash is idempotent, different hash is HTTP 409 plus audit.
-- Dense failure is lexical-only fallback; local-token vectors never query remote vector indexes.
-- V1.1 flags default false.
-- LLM writes candidates only; server owns project_id, scope, review, and publish fields.
-- Evidence must be verified against immutable L0.
-- Shadow results never enter Search or Context.
-- Old V1 tables/API remain for two full release cycles.
+- Append 不得同步调用 Embedding 或 LLM。
+- `UNIQUE(project_id,event_key)`；相同哈希按幂等处理，不同哈希返回 HTTP 409 并写入审计。
+- 稠密检索失败时只能回退到词法检索；本地 Token 向量不能查询远程向量索引。
+- V1.1 功能开关默认关闭。
+- LLM 只能写入候选；服务端负责 `project_id`、作用域、审核和发布字段。
+- 证据必须依据不可变 L0 验证。
+- Shadow 结果不得进入 Search 或 Context。
+- 旧 V1 表/API 至少保留两个完整发布周期。
 
-### Task 0: Audit and specification
+### 任务 0：审计与规格
 
-Files: docs/CODEX_MEMORY_V1_1_EXECUTABLE_SPEC.md, IMPLEMENTATION_STATUS.md. Run baseline static_check and pytest. Commit: 7cefe06.
+文件：`docs/CODEX_MEMORY_V1_1_EXECUTABLE_SPEC.md`、`IMPLEMENTATION_STATUS.md`。运行基线 `static_check` 和 pytest。提交：`7cefe06`。
 
-### Task 1: Additive database schema
+### 任务 1：增量数据库结构
 
-Files: db_models.py, alembic/versions/0003+ migrations, tests/test_v1_schema.py or new migration tests. Add flags, policies, outbox, jobs, attempts, candidates, evidence, policy results, profiles, chunks, V1.1 vector table, lexical/audit tables. Preserve legacy memory_embeddings. Commit separately.
+文件：`db_models.py`、`alembic/versions/0003+` 迁移、`tests/test_v1_schema.py` 或新的迁移测试。增加开关、策略、Outbox、任务、尝试、候选、证据、策略结果、Profile、分块、V1.1 向量表、词法/审计表；保留历史 `memory_embeddings`。独立提交。
 
-### Task 2: Append contract
+### 任务 2：Append 契约
 
-Files: v1_service.py, http_api.py, v1_schemas.py, db_models.py, Hook tests. Write immutable L0 plus outbox in one transaction; return 201/200/409; retain Hook local outbox. Commit separately.
+文件：`v1_service.py`、`http_api.py`、`v1_schemas.py`、`db_models.py`、Hook 测试。一个事务中写入不可变 L0 和 Outbox；返回 201/200/409；保留 Hook 本地 Outbox。独立提交。
 
-### Task 3: Worker framework
+### 任务 3：Worker 框架
 
-Files: new worker/outbox modules, models, services, admin endpoint tests. Add SKIP LOCKED claim, lease, heartbeat, sweeper, backoff, exception classification, job idempotency and dead/retry operations. Commit separately.
+文件：新的 Worker/Outbox 模块、模型、服务和管理端点测试。增加 SKIP LOCKED 领取、租约、心跳、清理器、退避、异常分类、任务幂等和 dead/retry 操作。独立提交。
 
-### Task 4: Lexical and context retrieval
+### 任务 4：词法与上下文检索
 
-Files: retrieval modules, v1_service/http schemas, lexical migrations, retrieval tests. Add scope/status filtering, simple/code/Chinese token/trigram retrieval, RRF constants, L3 priority, global quota, context budget and degraded metadata. Commit separately.
+文件：检索模块、V1 service/HTTP Schema、词法迁移和检索测试。增加作用域/状态筛选、简单文本/代码/中文 Token/Trigram 检索、RRF 常量、L3 优先级、全局配额、上下文预算和降级元数据。独立提交。
 
-### Task 5: Embedding profiles
+### 任务 5：Embedding Profile
 
-Files: embedding provider modules, vector store/retriever, profile APIs, migrations and tests. Add query/document methods, batch/capability validation, profile-isolated vectors/indexes, backfill, shadow retrieval, canary/rollback. Commit separately.
+文件：Embedding Provider 模块、向量存储/检索器、Profile API、迁移和测试。增加 query/document 方法、批量/能力校验、Profile 隔离的向量/索引、回填、shadow 检索、Canary 和回滚。独立提交。
 
-### Task 6: Candidate and policy pipeline
+### 任务 6：候选与策略流水线
 
-Files: candidate/policy modules, classifier integration, models, APIs and tests. Convert rule classification to candidate output; verify evidence and publish with version/relation/audit. Commit separately.
+文件：候选/策略模块、分类器集成、模型、API 和测试。将规则分类输出转换为候选；通过版本/关系/审计完成证据校验和发布。独立提交。
 
-### Task 7: LLM shadow enrichment
+### 任务 7：LLM Shadow 增强
 
-Files: provider-neutral LLM adapter, ErrorMemoryExtractor, redaction/policy, schemas and tests. Shadow-only, strict schema, abstain, evidence, timeout/cost budget and prompt injection defense. Commit separately.
+文件：与 Provider 无关的 LLM 适配器、ErrorMemoryExtractor、脱敏/策略、Schema 和测试。只允许 Shadow、严格 Schema、abstain、证据、超时/成本预算和提示注入防护。独立提交。
 
-### Task 8: MCP and Admin surface
+### 任务 8：MCP 与管理后台
 
-Files: v1 MCP, HTTP API, auth, schemas and tests. Add Search/Context/Admin/job/profile/candidate/replay/review contracts without exposing shadow candidates. Commit separately.
+文件：V1 MCP、HTTP API、认证、Schema 和测试。增加 Search/Context/Admin/任务/Profile/候选/replay/review 契约，但不暴露 Shadow 候选。独立提交。
 
-### Task 9: Verification and fault injection
+### 任务 9：验证与故障注入
 
-Files: unit/integration/concurrency/fault tests and status. Verify all acceptance criteria, migration compatibility, isolation, profile separation, worker crash/lease recovery and remote failures. Commit separately.
+文件：单元/集成/并发/故障测试和状态文档。验证全部验收标准、迁移兼容性、隔离性、Profile 分离、Worker 崩溃/租约恢复和远程失败。独立提交。
 
-### Task 10: Flags and release
+### 任务 10：开关与发布
 
-Files: feature flag/policy modules, deployment docs, status and release tests. Implement project canary 1/10/50/100%, rollback, metrics, compatibility and two-cycle retention. Commit separately.
+文件：功能开关/策略模块、部署文档、状态和发布测试。实现项目级 1/10/50/100% Canary、回滚、指标、兼容性和两个周期的保留策略。独立提交。

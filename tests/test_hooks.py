@@ -1,67 +1,84 @@
 from __future__ import annotations
 
-import importlib.util
-import json
 from pathlib import Path
 
-import pytest
+from codex_memory.codex_hooks import handle_assistant_stop, handle_user_prompt
+from codex_memory.hook_client import PermanentHookError, RetryableHookError
 
 
-def _hook_module():
-    path = Path(__file__).parents[1] / ".codex" / "scripts" / "hook_common.py"
-    spec = importlib.util.spec_from_file_location("hook_common", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+class FakeClient:
+    def __init__(self, *, append_error: Exception | None = None, context: dict | None = None) -> None:
+        self.append_error = append_error
+        self.context_result = context or {"long_term_rules": []}
+        self.calls: list[tuple[str, object]] = []
+
+    def append(self, payload: dict) -> dict:
+        self.calls.append(("append", payload))
+        if self.append_error:
+            raise self.append_error
+        return {"status": "accepted"}
+
+    def context(self, project_id: str, task: str) -> dict:
+        self.calls.append(("context", (project_id, task)))
+        return self.context_result
 
 
-def test_user_event_posts_append_and_returns_context(monkeypatch, tmp_path: Path) -> None:
-    hook = _hook_module()
-    calls: list[tuple[str, dict]] = []
+def _event(cwd: Path) -> dict[str, str]:
+    return {"cwd": str(cwd), "session_id": "s1", "turn_id": "t1", "prompt": "change order"}
 
-    def post(path: str, payload: dict, _env: dict) -> dict:
-        calls.append((path, payload))
-        if path.endswith("/context"):
-            return {"critical_rules": [], "long_term_rules": [{"content": "use service"}], "recent_insights": [], "source_ids": [3]}
-        return {"id": 1, "status": "stored"}
 
-    monkeypatch.setattr(hook, "post_json", post)
-    result = hook.handle_user_prompt(
-        {"cwd": "G:/erp", "session_id": "s1", "turn_id": "t1", "prompt": "change order"},
-        {"CODEX_MEMORY_PROJECT_MAP": json.dumps({"G:/erp": "erp"}), "CODEX_MEMORY_API_URL": "http://memory", "CODEX_MEMORY_API_TOKEN": "secret", "CODEX_MEMORY_OUTBOX_PATH": str(tmp_path / "outbox.jsonl")},
+def _stop_event(cwd: Path) -> dict[str, str]:
+    return {"cwd": str(cwd), "session_id": "s1", "turn_id": "t1", "last_assistant_message": "done"}
+
+
+def _env(outbox: Path) -> dict[str, str]:
+    return {"CODEX_MEMORY_OUTBOX_DIR": str(outbox), "CODEX_MEMORY_API_URL": "http://memory", "CODEX_MEMORY_API_TOKEN": "token"}
+
+
+def _enable(cwd: Path, project_id: str) -> None:
+    (cwd / "AGENTS.md").write_text(
+        "CODEX_MEMORY_AUTO_LOG=required\n"
+        f"CODEX_MEMORY_PROJECT_ID={project_id}\n"
+        "CODEX_MEMORY_MCP_SERVER=codex-memory\n",
+        encoding="utf-8",
     )
 
-    assert calls[0][0].endswith("/append")
-    assert calls[0][1]["event_key"] == "s1:t1:user"
-    assert "use service" in result
+
+def test_disabled_project_does_not_call_api(tmp_path: Path) -> None:
+    client = FakeClient()
+
+    result = handle_user_prompt(_event(tmp_path), _env(tmp_path / "outbox"), client=client)
+
+    assert result == ""
+    assert client.calls == []
 
 
-def test_failed_stop_event_is_stored_without_token(monkeypatch, tmp_path: Path) -> None:
-    hook = _hook_module()
+def test_enabled_user_event_appends_then_returns_context(tmp_path: Path) -> None:
+    _enable(tmp_path, "erp")
+    client = FakeClient(context={"long_term_rules": [{"content": "use domain service"}]})
 
-    def fail(*_args, **_kwargs):
-        raise OSError("offline")
+    result = handle_user_prompt(_event(tmp_path), _env(tmp_path / "outbox"), client=client)
 
-    monkeypatch.setattr(hook, "post_json", fail)
-    outbox = tmp_path / "outbox.jsonl"
-    hook.handle_stop(
-        {"cwd": "G:/erp", "session_id": "s1", "turn_id": "t1", "last_assistant_message": "done"},
-        {"CODEX_MEMORY_PROJECT_MAP": json.dumps({"G:/erp": "erp"}), "CODEX_MEMORY_API_URL": "http://memory", "CODEX_MEMORY_API_TOKEN": "secret-token", "CODEX_MEMORY_OUTBOX_PATH": str(outbox)},
-    )
-
-    content = outbox.read_text(encoding="utf-8")
-    assert "secret-token" not in content
-    assert json.loads(content)["body"]["event_key"] == "s1:t1:assistant"
+    assert [call[0] for call in client.calls] == ["append", "context"]
+    assert "use domain service" in result
 
 
-def test_stop_ignores_empty_assistant_message(tmp_path: Path) -> None:
-    hook = _hook_module()
-    outbox = tmp_path / "outbox.jsonl"
+def test_retryable_assistant_failure_is_queued(tmp_path: Path) -> None:
+    _enable(tmp_path, "erp")
+    client = FakeClient(append_error=RetryableHookError("offline"))
 
-    hook.handle_stop(
-        {"cwd": "G:/erp", "session_id": "s1", "turn_id": "t1", "last_assistant_message": ""},
-        {"CODEX_MEMORY_PROJECT_MAP": json.dumps({"G:/erp": "erp"}), "CODEX_MEMORY_API_URL": "http://memory", "CODEX_MEMORY_OUTBOX_PATH": str(outbox)},
-    )
+    result = handle_assistant_stop(_stop_event(tmp_path), _env(tmp_path / "outbox"), client=client)
 
-    assert not outbox.exists()
+    assert result.queued is True
+    assert list((tmp_path / "outbox" / "erp").glob("pending.jsonl"))
+
+
+def test_permanent_failure_is_not_queued(tmp_path: Path) -> None:
+    _enable(tmp_path, "erp")
+    client = FakeClient(append_error=PermanentHookError("HTTP 403"))
+
+    result = handle_assistant_stop(_stop_event(tmp_path), _env(tmp_path / "outbox"), client=client)
+
+    assert result.queued is False
+    assert result.error is not None
+    assert not list((tmp_path / "outbox").rglob("pending.jsonl"))

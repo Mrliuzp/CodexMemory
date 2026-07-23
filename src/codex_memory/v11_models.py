@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Table, Text, func
+from sqlalchemy import Column, Date, JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -45,6 +45,10 @@ class ProjectProcessingPolicyRow(V11TimestampedRow, V11Base):
     failure_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="fail_closed")
     allowed_embedding_providers: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     allowed_llm_providers: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    daily_embedding_token_budget: Mapped[int | None] = mapped_column(Integer, default=0, server_default="0")
+    daily_llm_token_budget: Mapped[int | None] = mapped_column(Integer, default=0, server_default="0")
+    daily_embedding_token_budget: Mapped[int | None] = mapped_column(Integer, default=0, server_default="0")
+    daily_llm_token_budget: Mapped[int | None] = mapped_column(Integer, default=0, server_default="0")
     data_residency_policy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
@@ -182,6 +186,10 @@ class ProjectRetrievalProfileRow(V11Base):
     __tablename__ = "project_retrieval_profiles"
     project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), primary_key=True)
     active_embedding_profile_id: Mapped[int | None] = mapped_column(IdType, ForeignKey("embedding_profiles.id", ondelete="RESTRICT"))
+    canary_embedding_profile_id: Mapped[int | None] = mapped_column(IdType, ForeignKey("embedding_profiles.id", ondelete="RESTRICT"))
+    previous_active_embedding_profile_id: Mapped[int | None] = mapped_column(IdType, ForeignKey("embedding_profiles.id", ondelete="RESTRICT"))
+    canary_percent: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rollback_reason: Mapped[str | None] = mapped_column(Text)
     fallback_mode: Mapped[str] = mapped_column(String(20), default="lexical_only", server_default="lexical_only")
     hybrid_search_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     global_result_limit: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
@@ -237,6 +245,17 @@ class RetrievalAuditRow(V11Base):
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     result_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
+
+
+class DailyTokenUsageRow(V11Base):
+    __tablename__ = "daily_token_usage"
+    __table_args__ = (UniqueConstraint("project_id", "usage_date", "token_type", name="uq_daily_token_project_date_type"),)
+    id: Mapped[int] = mapped_column(IdType, primary_key=True)
+    project_id: Mapped[int] = mapped_column(IdType, ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    usage_date: Mapped[str] = mapped_column(Date, nullable=False)
+    token_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class SecurityAuditRow(V11Base):

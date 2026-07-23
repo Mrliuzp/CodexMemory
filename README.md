@@ -1,4 +1,4 @@
-﻿# Codex 记忆系统
+# Codex 记忆系统
 
 这个目录包含一个可本地运行的、按项目隔离的 Codex 记忆层 MVP。它用于保留原始对话、提取分层记忆、检索相关知识、优先处理错误学习，并在生成答案之前构建提示注入上下文。
 
@@ -250,19 +250,19 @@ V1 部署需要 Docker Desktop、PostgreSQL 16 和 pgvector。首次启动会自
 
 ```powershell
 Copy-Item .env.example .env
-# 编辑 .env，修改 POSTGRES_PASSWORD、数据库 URL 中对应的密码和 SERVICE_TOKEN
+# 编辑 .env：设置匹配的数据库密码，并分别生成 SERVICE_TOKEN、MCP_TOKEN、管理用户名、管理密码和会话签名密钥
 docker compose up -d --build
 docker compose ps
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+Invoke-RestMethod http://127.0.0.1:5174/api/v1/health
 ```
 
 服务地址：
 
-- API：`http://127.0.0.1:8000`
+- 管理后台与 API 统一入口：`http://127.0.0.1:5174`（API 路径前缀为 `/api`）
 - MCP Streamable HTTP：`http://127.0.0.1:8001/mcp`
 - 数据库数据：Docker 命名卷 `pgdata`
 
-`.env` 中的 `CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY` 是首个项目标识，`CODEX_MEMORY_SERVICE_TOKEN` 同时作为该项目的 API Token 和 MCP 服务 Token。生产环境请使用随机高强度值，并通过反向代理配置 HTTPS、访问控制和备份策略。
+`.env` 中的 `CODEX_MEMORY_BOOTSTRAP_PROJECT_KEY` 是首个项目标识。`CODEX_MEMORY_SERVICE_TOKEN` 是 MCP 服务访问内部 API 的项目 Token，`CODEX_MEMORY_MCP_TOKEN` 是 Codex 客户端访问 MCP 的独立 Bearer Token，两者不得复用。管理用户名、密码和 `CODEX_MEMORY_ADMIN_SESSION_SECRET` 也必须替换示例值。生产环境请使用随机高强度值，并配置 HTTPS、访问控制和备份策略。
 
 要替换默认的本地嵌入逻辑，传入一个实现了 `embed(text)` 和 `similarity(left, right)` 的对象：
 
