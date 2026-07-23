@@ -1,4 +1,4 @@
-const base = import.meta.env.VITE_ADMIN_API_BASE || '/api/admin/v1'
+const base = import.meta.env.VITE_ADMIN_API_BASE || '/api/admin'
 
 async function request(path, options = {}, params = {}) {
   const token = localStorage.getItem('codex-memory-admin-token') || ''
@@ -20,9 +20,58 @@ export function adminGet(path, params = {}) {
   return request(path, {}, params)
 }
 
-export function getSystemStatus() { return adminGet('/system/status') }
-export function getProjectArchiveStatus(projectKey) { return adminGet(/projects//archive-status) }
+export function adminPost(path, body) {
+  return request(path, { method: 'POST', body: JSON.stringify(body) })
+}
 
 export function adminLogin(username, password) {
-  return request('/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+  return adminPost('/login', { username, password })
+}
+
+export function getMe() {
+  return adminGet('/me')
+}
+
+export function getDashboard() {
+  return adminGet('/dashboard')
+}
+
+export function getSystemStatus() {
+  return adminGet('/system/status')
+}
+
+export function getProjectArchiveStatus(projectKey) {
+  return adminGet('/projects/' + projectKey + '/archive-status')
+}
+
+export function getRawRecords(params) {
+  return adminGet('/raw-records', params)
+}
+
+export function getOutboxEvents(params) {
+  return adminGet('/outbox-events', params)
+}
+
+export function getRetrievalAudits(params) {
+  return adminGet('/retrieval-audits', params)
+}
+
+export function getAuditEvents(params) {
+  return adminGet('/audit-events', params)
+}
+
+export function getCandidates(params) {
+  return adminGet('/candidates', params)
+}
+
+export function getMemories(params) {
+  return adminGet('/memories', params)
+}
+
+export function getJobs(params) {
+  return adminGet('/jobs', params)
+}
+
+export function getProjects(params) {
+  return adminGet('/projects', params)
 }

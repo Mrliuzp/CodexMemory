@@ -83,7 +83,9 @@ async function load() {
   router.replace({ path: '/records', query: { kind: kind.value } })
   try {
     const result = await adminGet(`/${kind.value}`, { page: 1, page_size: 50 })
-    rows.value = Array.isArray(result.data) ? result.data : []
+    // 兼容新旧两种后端响应格式
+        var raw = result.data || result.candidates || result.memories || result.jobs || []
+        rows.value = Array.isArray(raw) ? raw : []
   } catch (cause) {
     rows.value = []
     error.value = cause.message

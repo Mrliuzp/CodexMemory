@@ -41,6 +41,9 @@ def run_worker_iteration(
     worker_id: str = "v11-worker",
     include_reflection: bool = False,
 ) -> dict[str, Any]:
+    from .maintenance import MaintenanceService
+    if MaintenanceService(session_factory).is_enabled():
+        return {"status": "maintenance_mode"}
     report: dict[str, Any] = {"v11": run_v11_once(session_factory, worker_id)}
     if include_reflection:
         report["reflection"] = run_once(session_factory)

@@ -8,6 +8,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须配置 POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -48,6 +50,20 @@ services:
     depends_on:
       api:
         condition: service_healthy
+  admin:
+    build: .
+    restart: unless-stopped
+    command: ["uvicorn", "admin.main:app", "--host", "0.0.0.0", "--port", "8500"]
+    environment:
+      CODEX_MEMORY_DATABASE_URL: ${CODEX_MEMORY_DATABASE_URL:?必须配置 CODEX_MEMORY_DATABASE_URL}
+      CODEX_MEMORY_ADMIN_USERNAME: ${CODEX_MEMORY_ADMIN_USERNAME:-admin}
+      CODEX_MEMORY_ADMIN_PASSWORD: ${CODEX_MEMORY_ADMIN_PASSWORD:-admin}
+    expose:
+      - "8500"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   mcp:
     build: .
     restart: unless-stopped

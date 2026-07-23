@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { adminGet } from '../api'
 const rows = ref([]); const loading = ref(true); const error = ref('')
-onMounted(async () => { try { rows.value = (await adminGet('/projects', { page: 1, page_size: 100 })).data } catch (e) { error.value = e.message } finally { loading.value = false } })
+onMounted(async () => { try { rows.value = (await adminGet('/projects', { page: 1, page_size: 100 })).projects } catch (e) { error.value = e.message } finally { loading.value = false } })
 </script>
 <template>
   <el-alert v-if="error" :title="error" type="warning" show-icon />
