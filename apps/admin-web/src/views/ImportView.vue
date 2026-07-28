@@ -74,7 +74,7 @@ async function uploadFileByChunks(batchId, file) {
 
 async function importFiles() {
   if (!selectedFiles.value.length) {
-    error.value = '??????????'
+    error.value = '请至少选择一个文件'
     return
   }
   submitting.value = true
@@ -84,7 +84,7 @@ async function importFiles() {
     const batchId = created.data.batch_id
     for (const file of selectedFiles.value) await uploadFileByChunks(batchId, file)
     await adminPost(`/import-batches/${batchId}/start`, {})
-    message.value = `???? ${batchId} ????????????????`
+    message.value = `批次 ${batchId} 已创建，正在后台解析文件`
     selectedFiles.value = []
     await load()
   } catch (cause) {
