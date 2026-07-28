@@ -9,10 +9,12 @@
 | 版本 | 目标 | 状态 |
 | --- | --- | --- |
 | V1.4 | 可信任务执行报告：可审计的 Hook 事件、Git 变更清单、确定性报告和只读管理界面 | 本次实施 |
-| V1.5 | Contract Registry | 未启动，明确不属于 V1.4 |
-| V1.6 | 通用 Evidence Platform 与 Provenance Graph | 未启动，明确不属于 V1.4 |
-| V1.7 | 多 Agent 精确归因、Legal Hold 与 Deployment Binding | 未启动，明确不属于 V1.4 |
-| V1.8 | AST 反向提取、知识图谱与多 Provider | 未启动，明确不属于 V1.4 |
+| V1.5 | PHP OpenAPI Revision 与接口文档 | 未启动，明确不属于 V1.4 |
+| V1.6 | Vue/TS 类型、Client、Mock 与基础契约校验 | 未启动，明确不属于 V1.4 |
+| V1.7 | 生产 Embedding | 未启动，明确不属于 V1.4 |
+| V1.8 | LLM Enrichment 灰度 | 未启动，明确不属于 V1.4 |
+
+Contract Registry、通用 Evidence Platform、Provenance Graph、多 Agent 精确归因、Legal Hold、Deployment Binding、AST 反向提取、知识图谱、多 Provider 与自动发布均为延期 backlog；它们不占用 V1.5 至 V1.8 的版本号，也不属于 V1.4。
 
 ## V1.4 目标与边界
 
@@ -22,7 +24,7 @@ V1.4 将一次 Codex session 建模为一个 `TaskRun`，保存可重放的执�
 
 ## 持久化与迁移
 
-新增 Alembic 修订 `0022_v14_task_execution_reports`，以前置合并修订 `0022_merge_heads` 为 `down_revision`；其发布编号为 V1.4 的 0022。迁移必须支持全新库升级、既有 `0021_v131_memory_scope` 路径升级至 V1.4，以及 V1.4 回退。迁移增加下列表，所有实体均通过内部 `project_id` 隔离，并设置必要的外键、唯一约束和索引。
+新增 Alembic 修订 `0022_v14_task_execution_reports`。其 `down_revision` 必须取实施时仓库 Alembic 修订图的真实 head；本蓝图冻结时，版本目录的终端合并修订为 `0022_merge_heads`，因此当前实施应以它为父修订。其发布编号为 V1.4 的 0022。迁移必须支持全新库升级、既有 `0021_v131_memory_scope` 路径升级至 V1.4，以及 V1.4 回退。迁移增加下列表，所有实体均通过内部 `project_id` 隔离，并设置必要的外键、唯一约束和索引。
 
 | 表 | 核心职责 | 幂等/隔离要求 |
 | --- | --- | --- |
