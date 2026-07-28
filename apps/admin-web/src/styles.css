@@ -19,3 +19,14 @@ body { margin: 0; min-width: 960px; }
 
 .import-card { margin-top: 18px; }
 .field-hint { margin-top: 8px; color: var(--el-text-color-secondary); font-size: 12px; }
+
+.task-filter-card { margin-bottom: 18px; }
+.task-pagination { display: flex; justify-content: flex-end; margin-top: 18px; }
+.task-detail { display: grid; gap: 18px; }
+.task-card { margin: 0; }
+.task-status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.task-description { margin-top: 18px; }
+.report-body { margin-top: 20px; color: #3f4d57; line-height: 1.7; white-space: pre-wrap; }
+.report-body h3 { color: #17212b; font-size: 15px; margin: 0 0 8px; }
+.manifest-table { margin-top: 18px; }
+.report-json { margin: 16px 0 0; padding: 12px; background: #f7f9fa; color: #52616b; border-radius: 4px; overflow: auto; }
