@@ -1,4 +1,4 @@
-# CodexMemory 版本路线与 V1.4 可信任务执行报告蓝图
+# CodexMemory 版本路线与 V1.5 OpenAPI Revision 蓝图
 
 更新时间：2026-07-29
 
@@ -8,13 +8,47 @@
 
 | 版本 | 目标 | 状态 |
 | --- | --- | --- |
-| V1.4 | 可信任务执行报告：可审计的 Hook 事件、Git 变更清单、确定性报告和只读管理界面 | 本次实施 |
-| V1.5 | PHP OpenAPI Revision 与接口文档 | 未启动，明确不属于 V1.4 |
+| V1.4 | 可信任务执行报告：可审计的 Hook 事件、Git 变更清单、确定性报告和只读管理界面 | 已发布 |
+| V1.5 | OpenAPI Revision 与接口文档：服务级不可变版本、受约束 OpenAPI 归一化、手工发布和确定性 Markdown | 当前实施 |
 | V1.6 | Vue/TS 类型、Client、Mock 与基础契约校验 | 未启动，明确不属于 V1.4 |
 | V1.7 | 生产 Embedding | 未启动，明确不属于 V1.4 |
 | V1.8 | LLM Enrichment 灰度 | 未启动，明确不属于 V1.4 |
 
-Contract Registry、通用 Evidence Platform、Provenance Graph、多 Agent 精确归因、Legal Hold、Deployment Binding、AST 反向提取、知识图谱、多 Provider 与自动发布均为延期 backlog；它们不占用 V1.5 至 V1.8 的版本号，也不属于 V1.4。
+PHP AST 反向提取、Vue/TS Client/类型/Mock、Breaking CI、LLM、Embedding、Memory 投影、消费者图、部署绑定、URL 拉取、自动发布、通用 Evidence Platform、Provenance Graph、多 Agent 精确归因、Legal Hold、知识图谱与多 Provider 均为延期 backlog；它们不占用 V1.5 至 V1.8 的版本号，也不属于 V1.5。
+
+## V1.5 目标与边界
+
+V1.5 建立 `backend_authoritative` 的接口契约登记能力。管理员可以创建服务、上传本地 OpenAPI JSON/YAML 文件、同步查看校验和确定性 Markdown，并以显式操作发布一个已校验的 Revision。每个服务的 Revision 不可变；发布后此前已发布版本改为 `superseded`。不使用 Outbox、Worker 或自动发布。
+
+详细决策见 [V1.5 ADR](v1.5/ADR-001-openapi-revision.md)，请求、响应、状态与校验规则见 [V1.5 API 与状态契约](v1.5/API_AND_STATE_CONTRACT.md)。这两个文档和本蓝图共同构成本版本的冻结规格。
+
+## V1.5 持久化、输入与归一化
+
+新增 Alembic 修订 `0023_v15_openapi_revisions`，父修订固定为 `0022_v14_task_execution_reports`。迁移建立服务、Revision 与操作逻辑索引所需表，并支持全新库、`0022` 升级、以及 `0023` 回退到 `0022`。
+
+上传仅接受 UTF-8（可含 BOM）的 `.json`、`.yaml`、`.yml` 本地文件，最大 2 MiB，最多 500 个 operations，最大结构深度 64。仅接受 OpenAPI `3.0.3` 与 `3.1.x`；拒绝 Swagger `2.0`、`3.0.0` 至 `3.0.2`、`3.2`、外部 `$ref`、`callbacks`、`webhooks` 与 `links`。本地 `$ref` 必须可解析，循环引用须安全处理。
+
+输入统一归一化到 OpenAPI `3.1.0`，并写入 `profile_version=v1`。无法无损转换的输入必须拒绝，不得以猜测或降级字段继续保存。规范化内容的 SHA-256 `content_hash` 是幂等键：相同服务和相同内容必须复用既有 Revision，不能占用新编号。
+
+每个 operation 都必须有 Revision 内唯一的 `operationId`。相同 `method + path` 改变 `operationId` 必须拒绝；相同 `operationId` 改变路由允许创建 Revision，但校验结果必须包含 `route_changed` warning。
+
+## V1.5 管理 API 与界面
+
+固定管理端 API：
+
+- `POST`、`GET /api/admin/v1/contract-services`
+- `GET /api/admin/v1/contract-services/{service_id}`
+- `POST /api/admin/v1/contract-services/{service_id}/revisions`（multipart `file`）
+- `GET /api/admin/v1/contract-services/{service_id}/revisions/{revision_number}`
+- `POST /api/admin/v1/contract-services/{service_id}/revisions/{revision_number}/publish`（`expected_content_hash`）
+
+所有接口复用现有 `data`/`meta`/`request_id` envelope、管理员写权限和项目隔离。前端仅新增“接口契约”导航、服务与 Revision 列表/详情、文件上传、手工发布及 Markdown 纯文本预览；所有新增用户文案为简体中文。
+
+## V1.5 验收矩阵
+
+必须验证 JSON/YAML/BOM、容量与非法输入、版本/Profile、nullable、组合 Schema、discriminator、multipart、循环本地 `$ref`、operationId、`route_changed`、内容幂等和并发编号。还必须验证发布/`superseded`/重复发布/事务回滚/不可变性、权限和跨项目隔离、Markdown 确定性、前端测试与构建、手工上传发布闭环、`git diff --check`、UTF-8/中文、Compose migration/health。
+
+所有 V1.5 与受影响测试必须 exit 0。全量 pytest 结果必须与 `main` 基线对照，功能分支不得新增或扩大失败集合。只有完成全部验收后，Draft PR 才可转为 Ready。
 
 ## V1.4 目标与边界
 
