@@ -13,7 +13,7 @@ def _document(*, operation_id: str = "getPet", path: str = "/pets") -> dict[str,
     return {
         "openapi": "3.0.3",
         "info": {"title": "宠物服务", "version": "1.0.0"},
-        "paths": {path: {"get": {"operationId": operation_id, "summary": "查询宠物"}}},
+        "paths": {path: {"get": {"operationId": operation_id, "summary": "查询宠物", "responses": {"200": {"description": "成功"}}}}},
     }
 
 
@@ -31,13 +31,68 @@ def test_openapi_json_bom_and_nullable_are_normalized() -> None:
     from codex_memory.api_operations import parse_and_normalize_openapi
 
     document = _document()
-    document["paths"]["/pets"]["get"]["responses"] = {"200": {"content": {"application/json": {"schema": {"type": "string", "nullable": True}}}}}
+    document["paths"]["/pets"]["get"]["responses"] = {"200": {"description": "成功", "content": {"application/json": {"schema": {"type": "string", "nullable": True}}}}}
     parsed = parse_and_normalize_openapi("contract.JSON", b"\xef\xbb\xbf" + json.dumps(document, ensure_ascii=False).encode())
     schema = parsed.document["paths"]["/pets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert parsed.document["openapi"] == "3.1.0"
     assert parsed.document["profile_version"] == "v1"
     assert schema["type"] == ["string", "null"]
     assert len(parsed.content_hash) == 64
+
+
+def test_validator_path_exclusive_bounds_and_operation_hash() -> None:
+    from codex_memory.api_operations import OpenAPIContractError, parse_and_normalize_openapi
+
+    document = _document()
+    document["paths"]["/pets"]["get"]["responses"]["200"] = {"description": "成功", "content": {"application/json": {"schema": {"type": "number", "minimum": 1, "exclusiveMinimum": True, "maximum": 10, "exclusiveMaximum": False}}}}
+    parsed = parse_and_normalize_openapi("contract.json", json.dumps(document, ensure_ascii=False).encode())
+    schema = parsed.document["paths"]["/pets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema["exclusiveMinimum"] == 1
+    assert "minimum" not in schema
+    assert schema["maximum"] == 10
+    assert "exclusiveMaximum" not in schema
+    assert parsed.operations[0].operation_hash
+
+    invalid = _document()
+    invalid["paths"]["/pets"]["get"]["responses"] = {"200": {}}
+    with pytest.raises(OpenAPIContractError) as error:
+        parse_and_normalize_openapi("contract.json", json.dumps(invalid).encode())
+    assert error.value.errors[0]["code"] == "openapi_validation_error"
+    assert "JSON 路径" in error.value.errors[0]["message"]
+
+
+def test_structural_unsupported_fields_do_not_match_schema_properties() -> None:
+    from codex_memory.api_operations import OpenAPIContractError, parse_and_normalize_openapi
+
+    document = _document()
+    document["components"] = {"schemas": {"Example": {"type": "object", "properties": {"callbacks": {"type": "string"}}}}}
+    parsed = parse_and_normalize_openapi("contract.json", json.dumps(document).encode())
+    assert "callbacks" in parsed.document["components"]["schemas"]["Example"]["properties"]
+
+    invalid = _document()
+    invalid["paths"]["/pets"]["get"]["callbacks"] = {}
+    with pytest.raises(OpenAPIContractError) as error:
+        parse_and_normalize_openapi("contract.json", json.dumps(invalid).encode())
+    assert error.value.errors[0]["code"] == "unsupported_feature"
+
+
+def test_markdown_contains_servers_auth_request_response_and_schemas() -> None:
+    from codex_memory.api_operations import parse_and_normalize_openapi
+
+    document = _document()
+    document["servers"] = [{"url": "https://api.example.test", "description": "生产服务"}]
+    document["security"] = [{"bearerAuth": []}]
+    document["paths"]["/pets"]["get"]["parameters"] = [{"name": "limit", "in": "query", "schema": {"type": "integer"}}]
+    document["paths"]["/pets"]["get"]["requestBody"] = {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}}
+    document["components"] = {"schemas": {"Pet": {"type": "object", "properties": {"id": {"type": "integer"}}}}}
+    parsed = parse_and_normalize_openapi("contract.json", json.dumps(document, ensure_ascii=False).encode())
+    assert "## 服务器" in parsed.markdown
+    assert "## 鉴权" in parsed.markdown
+    assert "#### 请求" in parsed.markdown
+    assert "#### 响应" in parsed.markdown
+    assert "## 公共 Schema" in parsed.markdown
+    assert "Schema `Pet`" in parsed.markdown
+    assert parsed.markdown == parse_and_normalize_openapi("contract.json", json.dumps(document, ensure_ascii=False).encode()).markdown
 
 
 def test_yaml_local_ref_cycle_is_safe_and_external_ref_is_rejected() -> None:
@@ -131,11 +186,42 @@ def test_revision_service_is_idempotent_and_publishes_atomically() -> None:
     assert reused is False
     assert reused_again is True
     assert duplicate.revision_number == first.revision_number == 1
+    detail = service.get_revision(created.id, 1, 1)
+    assert detail["source_version"] == "3.0.3"
+    assert detail["normalized_version"] == "3.1.0"
+    assert detail["source_document"]["openapi"] == "3.0.3"
+    assert detail["validation_summary"]["errors"] == []
+    assert detail["operations"][0]["operation_hash"]
     published, idempotent = service.publish(created.id, 1, first.content_hash, 1)
     repeated, repeated_idempotent = service.publish(created.id, 1, first.content_hash, 1)
     assert published.status == repeated.status == "published"
     assert idempotent is False
     assert repeated_idempotent is True
+
+
+def test_revision_identity_uses_only_current_published_revision() -> None:
+    from codex_memory.api_operations import OpenAPIContractError
+    from codex_memory.contract_revisions import ContractRevisionService
+    from codex_memory.persistence.v15_models import ContractServiceRow, V15Base
+
+    engine = create_engine("sqlite:///:memory:")
+    V15Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    service = ContractRevisionService(factory)
+    created = service.create_service(1, "pet-service")
+    first_document = _document(operation_id="getPet")
+    second_document = _document(operation_id="getPetV2")
+    first, _ = service.create_revision(created.id, "one.json", json.dumps(first_document).encode(), 1)
+    second, _ = service.create_revision(created.id, "two.json", json.dumps(second_document).encode(), 1)
+    assert second.revision_number == 2
+    service.publish(created.id, 1, first.content_hash, 1)
+    third_document = _document(operation_id="getPetV2")
+    third_document["paths"]["/pets"]["get"]["summary"] = "变更后的查询"
+    with pytest.raises(OpenAPIContractError, match="不可变更"):
+        service.create_revision(created.id, "three.json", json.dumps(third_document).encode(), 1)
+    with factory() as session:
+        service_row = session.get(ContractServiceRow, created.id)
+        assert service_row.current_published_revision_id == first.id
 
 
 def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
@@ -156,7 +242,10 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
         other = ProjectRow(id=2, project_key="crm", name="CRM")
         session.add_all([project, other])
         session.flush()
-        session.add(ApiKeyRow(id=1, project_id=project.id, token_hash=hashlib.sha256(b"admin-token").hexdigest(), permissions=["read", "admin"]))
+        session.add_all([
+            ApiKeyRow(id=1, project_id=project.id, token_hash=hashlib.sha256(b"admin-token").hexdigest(), permissions=["read", "admin"]),
+            ApiKeyRow(id=2, project_id=project.id, token_hash=hashlib.sha256(b"read-token").hexdigest(), permissions=["read"]),
+        ])
         session.commit()
     client = TestClient(create_v1_app(factory))
     headers = {"Authorization": "Bearer admin-token"}
@@ -164,18 +253,34 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     assert created.status_code == 200
     assert {"data", "meta", "request_id"} == set(created.json())
     service_id = created.json()["data"]["id"]
+    read_headers = {"Authorization": "Bearer read-token"}
+    read_list = client.get("/api/admin/v1/contract-services?keyword=pets", headers=read_headers)
+    assert read_list.status_code == 200
+    assert len(read_list.json()["data"]) == 1
+    read_upload = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("blocked.json", b"{}", "application/json")}, headers=read_headers)
+    assert read_upload.status_code == 403
     invalid_json = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("invalid.json", b'{"openapi":"3.1.0","info":{"title":"NaN","version":NaN},"paths":{}}', "application/json")}, headers=headers)
     assert invalid_json.status_code == 422
     assert invalid_json.json()["meta"]["validation_errors"][0]["code"] == "invalid_syntax"
     invalid_yaml = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("invalid.yaml", "openapi: 3.1.0\ninfo:\n  title: 日期\n  version: 2026-07-29\npaths: {}\n".encode(), "application/yaml")}, headers=headers)
     assert invalid_yaml.status_code == 422
     assert invalid_yaml.json()["meta"]["validation_errors"][0]["code"] == "unsupported_scalar"
+    too_large = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("large.json", b"{" + b" " * (2 * 1024 * 1024) + b"}", "application/json")}, headers=headers)
+    assert too_large.status_code == 413
+    assert too_large.json()["error"]["code"] == "document_too_large"
     body = json.dumps(_document(), ensure_ascii=False).encode()
     uploaded = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("contract.json", body, "application/json")}, headers=headers)
     assert uploaded.status_code == 200
     assert uploaded.json()["data"]["revision_number"] == 1
+    proposed_list = client.get("/api/admin/v1/contract-services?status=proposed&keyword=pets", headers=read_headers)
+    assert proposed_list.status_code == 200
+    assert proposed_list.json()["meta"]["total"] == 1
     content_hash = uploaded.json()["data"]["content_hash"]
     published = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions/1/publish", json={"expected_content_hash": content_hash}, headers=headers)
     assert published.status_code == 200
+    assert published.json()["data"]["published_by"] == "admin"
+    published_list = client.get("/api/admin/v1/contract-services?status=published&keyword=pets", headers=read_headers)
+    assert published_list.status_code == 200
+    assert published_list.json()["data"][0]["current_published_revision_id"] == 1
     denied = client.get(f"/api/admin/v1/contract-services/{service_id}", headers={"Authorization": "Bearer missing"})
     assert denied.status_code == 401

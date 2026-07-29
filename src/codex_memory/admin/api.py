@@ -409,10 +409,10 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             row = contract_service.create_service(project.id, service_key, payload.name, payload.description)
         except ContractRevisionConflictError as error:
             raise _error(request, error.code, str(error), status.HTTP_409_CONFLICT) from error
-        return {"data": {"id": row.id, "project_id": row.project_id, "service_key": row.service_key, "name": row.name, "description": row.description, "created_at": _row_value(row, "created_at"), "updated_at": _row_value(row, "updated_at"), "revisions": []}, "meta": {}, "request_id": _request_id(request)}
+        return {"data": {"id": row.id, "project_id": row.project_id, "service_key": row.service_key, "name": row.name, "description": row.description, "current_published_revision_id": row.current_published_revision_id, "created_at": _row_value(row, "created_at"), "updated_at": _row_value(row, "updated_at"), "revisions": []}, "meta": {}, "request_id": _request_id(request)}
 
     @router.get("/contract-services")
-    def list_contract_services(request: Request, project_key: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
+    def list_contract_services(request: Request, project_key: str | None = None, status_filter: str | None = Query(default=None, alias="status"), keyword: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
         if project_key:
             project_id = project_context(request, project_key, None, current).id
         elif "admin" in current.permissions:
@@ -420,7 +420,9 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         else:
             project_id = project_context(request, current.project_key, None, current).id
         page, page_size, _, _, _ = paging
-        rows = contract_service.list_services(project_id)
+        if status_filter is not None and status_filter not in {"proposed", "published", "superseded"}:
+            raise _error(request, "invalid_revision_status", "Revision 状态无效", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        rows = contract_service.list_services(project_id, status_filter, keyword)
         total = len(rows)
         items = []
         for row in rows[(page - 1) * page_size: page * page_size]:
@@ -468,9 +470,12 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         if not isinstance(content, bytes):
             content = bytes(content)
         try:
-            revision, reused = contract_service.create_revision(row.id, filename, content, project_id)
+            actor = "admin"
+            revision, reused = contract_service.create_revision(row.id, filename, content, project_id, created_by=actor)
         except OpenAPIContractError as error:
-            raise _error(request, "invalid_openapi_document", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY, meta={"validation_errors": error.errors}) from error
+            validation_code = str(error.errors[0].get("code", "invalid_openapi_document")) if error.errors else "invalid_openapi_document"
+            validation_status = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if validation_code == "document_too_large" else status.HTTP_422_UNPROCESSABLE_ENTITY
+            raise _error(request, validation_code, str(error), validation_status, meta={"validation_errors": error.errors}) from error
         except ContractRevisionConflictError as error:
             raise _error(request, error.code, str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:
@@ -491,7 +496,8 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     def publish_contract_revision(service_id: int, revision_number: int, payload: ContractPublishRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         row, project_id = _contract_service_project(request, service_id, current, require_admin=True)
         try:
-            revision, idempotent = contract_service.publish(row.id, revision_number, payload.expected_content_hash, project_id)
+            actor = "admin"
+            revision, idempotent = contract_service.publish(row.id, revision_number, payload.expected_content_hash, project_id, published_by=actor)
         except ContractRevisionConflictError as error:
             raise _error(request, error.code, str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:

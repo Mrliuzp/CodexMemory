@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from pydantic import BaseModel, Field
@@ -67,6 +70,11 @@ def create_v1_app(session_factory: Any) -> FastAPI:
     async def admin_error_handler(request: Request, exc: AdminAPIError) -> JSONResponse:
         headers = {"X-Request-ID": exc.request_id, **exc.headers}
         return JSONResponse(status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message}, "meta": getattr(exc, "meta", {}), "request_id": exc.request_id}, headers=headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        request_id = getattr(request.state, "request_id", None) or str(uuid4())
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"error": {"code": "request_validation_error", "message": "请求参数无效", "details": jsonable_encoder(exc.errors())}, "meta": {}, "request_id": request_id}, headers={"X-Request-ID": request_id})
     bearer = HTTPBearer(auto_error=False)
 
     def current_principal(
