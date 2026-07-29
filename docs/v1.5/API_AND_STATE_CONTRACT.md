@@ -12,9 +12,11 @@
 
 `POST /api/admin/v1/contract-services/{service_id}/revisions/{revision_number}/publish` 的 JSON 请求体为 `{ "expected_content_hash": "<sha256>" }`。哈希不匹配返回冲突；发布已发布 Revision 是幂等成功；发布其他 Revision 时必须在同一事务内完成状态切换。任何错误都不得留下部分 `superseded` 或部分 `published` 状态。
 
+V1.5 当前的 `Principal` 没有稳定用户身份字段，因此 `created_by` 与 `published_by` 暂以固定的 `admin` 占位值记录。该值只表示通过管理员写入口，不代表真实用户身份；后续接入稳定身份字段后再替换，现阶段不提供按用户追溯的审计能力。
+
 ## OpenAPI 校验与告警
 
-归一化输出固定为 `openapi: 3.1.0` 和 `profile_version: v1`。接受 `3.0.3`、`3.1.x`；拒绝 Swagger 2.0、3.0.0–3.0.2、3.2、外部 `$ref`、`callbacks`、`webhooks`、`links`。支持 nullable、组合 Schema、discriminator、multipart 与循环本地 `$ref` 的安全解析。
+归一化输出固定为 `openapi: 3.1.0`。`profile_version: v1` 仅作为 Revision 元数据列和响应元数据返回，不写入 OpenAPI 文档根节点，以保证归一化文档仍可由 OpenAPI 3.1 校验器验证。接受 `3.0.3`、`3.1.x`；拒绝 Swagger 2.0、3.0.0–3.0.2、3.2、外部 `$ref`、`callbacks`、`webhooks`、`links`。支持 nullable、组合 Schema、discriminator、multipart 与循环本地 `$ref` 的安全解析。
 
 每项 operation 均要求非空且 Revision 内唯一的 `operationId`。同一 `method + path` 的 `operationId` 变更为校验错误；同一 `operationId` 的路由变更是允许保存的 `route_changed` warning。错误和 warning 均作为结构化数据返回，不能仅写入日志。
 

@@ -425,7 +425,6 @@ def parse_and_normalize_openapi(filename: str, content: bytes, previous_operatio
     if not isinstance(normalized, dict):
         raise OpenAPIContractError("OpenAPI 文档根节点必须是对象")
     normalized["openapi"] = "3.1.0"
-    normalized["profile_version"] = "v1"
     normalized = _canonical(normalized)
     operations = _operations(normalized)
     warnings = _transition_warnings(operations, previous_operations)

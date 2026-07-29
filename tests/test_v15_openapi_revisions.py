@@ -29,13 +29,15 @@ def test_v15_metadata_isolated_and_contains_expected_tables() -> None:
 
 def test_openapi_json_bom_and_nullable_are_normalized() -> None:
     from codex_memory.api_operations import parse_and_normalize_openapi
+    from openapi_spec_validator import validate
 
     document = _document()
     document["paths"]["/pets"]["get"]["responses"] = {"200": {"description": "成功", "content": {"application/json": {"schema": {"type": "string", "nullable": True}}}}}
     parsed = parse_and_normalize_openapi("contract.JSON", b"\xef\xbb\xbf" + json.dumps(document, ensure_ascii=False).encode())
     schema = parsed.document["paths"]["/pets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert parsed.document["openapi"] == "3.1.0"
-    assert parsed.document["profile_version"] == "v1"
+    assert "profile_version" not in parsed.document
+    validate(parsed.document)
     assert schema["type"] == ["string", "null"]
     assert len(parsed.content_hash) == 64
 
@@ -171,6 +173,24 @@ paths: {}
     assert nan_error.value.errors[0]["code"] == "invalid_syntax"
 
 
+def test_contract_error_code_mapping_is_stable() -> None:
+    from codex_memory.admin.api import _contract_openapi_error_code, _contract_revision_error_code
+
+    assert _contract_openapi_error_code("invalid_extension") == "contract_invalid_file"
+    assert _contract_openapi_error_code("invalid_encoding") == "contract_invalid_file"
+    assert _contract_openapi_error_code("invalid_syntax") == "contract_invalid_file"
+    assert _contract_openapi_error_code("document_too_large") == "contract_file_too_large"
+    assert _contract_openapi_error_code("unsupported_version") == "contract_unsupported_version"
+    assert _contract_openapi_error_code("openapi_validation_error") == "contract_validation_failed"
+    assert _contract_openapi_error_code("lossy_normalization") == "contract_profile_unsupported"
+    assert _contract_openapi_error_code("missing_operation_id") == "contract_operation_id_invalid"
+    assert _contract_openapi_error_code("duplicate_operation_id") == "contract_operation_id_invalid"
+    assert _contract_openapi_error_code("operation_id_changed") == "contract_operation_id_conflict"
+    assert _contract_revision_error_code("content_hash_mismatch") == "contract_revision_conflict"
+    assert _contract_revision_error_code("revision_not_publishable") == "contract_revision_conflict"
+    assert _contract_revision_error_code("service_exists") == "contract_service_conflict"
+
+
 def test_revision_service_is_idempotent_and_publishes_atomically() -> None:
     from codex_memory.contract_revisions import ContractRevisionService
     from codex_memory.persistence.v15_models import V15Base
@@ -253,6 +273,9 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     assert created.status_code == 200
     assert {"data", "meta", "request_id"} == set(created.json())
     service_id = created.json()["data"]["id"]
+    duplicate_service = client.post("/api/admin/v1/contract-services", json={"project_key": "erp", "service_key": "pets", "name": "宠物服务"}, headers=headers)
+    assert duplicate_service.status_code == 409
+    assert duplicate_service.json()["error"]["code"] == "contract_service_conflict"
     read_headers = {"Authorization": "Bearer read-token"}
     read_list = client.get("/api/admin/v1/contract-services?keyword=pets", headers=read_headers)
     assert read_list.status_code == 200
@@ -261,21 +284,28 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     assert read_upload.status_code == 403
     invalid_json = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("invalid.json", b'{"openapi":"3.1.0","info":{"title":"NaN","version":NaN},"paths":{}}', "application/json")}, headers=headers)
     assert invalid_json.status_code == 422
+    assert invalid_json.json()["error"]["code"] == "contract_invalid_file"
     assert invalid_json.json()["meta"]["validation_errors"][0]["code"] == "invalid_syntax"
     invalid_yaml = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("invalid.yaml", "openapi: 3.1.0\ninfo:\n  title: 日期\n  version: 2026-07-29\npaths: {}\n".encode(), "application/yaml")}, headers=headers)
     assert invalid_yaml.status_code == 422
+    assert invalid_yaml.json()["error"]["code"] == "contract_validation_failed"
     assert invalid_yaml.json()["meta"]["validation_errors"][0]["code"] == "unsupported_scalar"
     too_large = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("large.json", b"{" + b" " * (2 * 1024 * 1024) + b"}", "application/json")}, headers=headers)
     assert too_large.status_code == 413
-    assert too_large.json()["error"]["code"] == "document_too_large"
+    assert too_large.json()["error"]["code"] == "contract_file_too_large"
     body = json.dumps(_document(), ensure_ascii=False).encode()
     uploaded = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("contract.json", body, "application/json")}, headers=headers)
     assert uploaded.status_code == 200
     assert uploaded.json()["data"]["revision_number"] == 1
+    assert uploaded.json()["data"]["profile_version"] == "v1"
+    assert uploaded.json()["data"]["created_by"] == "admin"
     proposed_list = client.get("/api/admin/v1/contract-services?status=proposed&keyword=pets", headers=read_headers)
     assert proposed_list.status_code == 200
     assert proposed_list.json()["meta"]["total"] == 1
     content_hash = uploaded.json()["data"]["content_hash"]
+    hash_conflict = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions/1/publish", json={"expected_content_hash": "0" * 64}, headers=headers)
+    assert hash_conflict.status_code == 409
+    assert hash_conflict.json()["error"]["code"] == "contract_revision_conflict"
     published = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions/1/publish", json={"expected_content_hash": content_hash}, headers=headers)
     assert published.status_code == 200
     assert published.json()["data"]["published_by"] == "admin"
@@ -284,3 +314,37 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     assert published_list.json()["data"][0]["current_published_revision_id"] == 1
     denied = client.get(f"/api/admin/v1/contract-services/{service_id}", headers={"Authorization": "Bearer missing"})
     assert denied.status_code == 401
+
+    missing_service = client.get("/api/admin/v1/contract-services/999", headers=read_headers)
+    assert missing_service.status_code == 404
+    assert missing_service.json()["error"]["code"] == "contract_service_not_found"
+    missing_revision = client.get(f"/api/admin/v1/contract-services/{service_id}/revisions/999", headers=read_headers)
+    assert missing_revision.status_code == 404
+    assert missing_revision.json()["error"]["code"] == "contract_revision_not_found"
+
+
+def test_contract_read_requires_read_permission_with_project_access() -> None:
+    import hashlib
+
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+
+    from codex_memory.db_models import ApiKeyRow, Base, ProjectRow, V15Base
+    from codex_memory.http_api import create_v1_app
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    V15Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as session:
+        project = ProjectRow(id=1, project_key="erp", name="ERP")
+        session.add(project)
+        session.flush()
+        session.add(ApiKeyRow(id=1, project_id=project.id, token_hash=hashlib.sha256(b"project-token").hexdigest(), permissions=[]))
+        session.commit()
+    client = TestClient(create_v1_app(factory))
+    headers = {"Authorization": "Bearer project-token"}
+    for path in ("/api/admin/v1/contract-services", "/api/admin/v1/contract-services/1", "/api/admin/v1/contract-services/1/revisions/1"):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "permission_denied"

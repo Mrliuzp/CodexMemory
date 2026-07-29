@@ -10,11 +10,13 @@ V1.5 采用 `backend_authoritative`。数据库中每个服务的 Revision 为�
 
 服务的接口身份以 Revision 内 `operationId` 为逻辑索引。相同路由改 `operationId` 是不连续的接口身份变化，必须拒绝；同一 `operationId` 改路由允许，但产生 `route_changed` warning。内容哈希基于归一化后的 OpenAPI 文档，重复上传不得创建新 Revision。
 
+当前 `Principal` 未提供稳定用户身份，`created_by` 与 `published_by` 使用固定 `admin` 占位值。该占位值用于区分管理员写入口，不是实际操作者身份，也不提供用户级审计；接入稳定身份字段后再迁移为真实身份。
+
 ## 输入与安全边界
 
 只接受本地 UTF-8 JSON/YAML 文件，允许 BOM，最大 2 MiB。服务器同步完成解析、校验、归一化、Markdown 生成和持久化；不访问 URL，不引入后台 Worker、Outbox 或部署绑定。只允许本地 `$ref`，拒绝外部引用及 `callbacks`、`webhooks`、`links`。
 
-接受 OpenAPI `3.0.3` 和 `3.1.x`，内部仅保存无损归一化的 OpenAPI `3.1.0`，`profile_version` 固定为 `v1`。无法无损归一化、结构深度超过 64、operations 超过 500 的文档一律拒绝。
+接受 OpenAPI `3.0.3` 和 `3.1.x`，内部仅保存无损归一化的 OpenAPI `3.1.0`；`profile_version` 仅存储在 Revision 元数据中，固定为 `v1`，不写入 OpenAPI 根节点。无法无损归一化、结构深度超过 64、operations 超过 500 的文档一律拒绝。
 
 ## 后果
 

@@ -26,6 +26,21 @@ from ..persistence.v15_models import ContractRevisionRow, ContractServiceRow
 
 SORT_FIELDS = {"created_at", "updated_at", "id", "status", "project_key", "title"}
 SENSITIVE_KEY = re.compile(r"(?:api[_-]?key|authorization|bearer|password|secret|token|credential)", re.I)
+# V1.5 当前没有稳定的用户身份字段，先以固定占位身份记录审计字段；后续接入身份系统时替换。
+V15_ACTOR_PLACEHOLDER = "admin"
+_CONTRACT_OPENAPI_ERROR_CODES = {
+    "invalid_extension": "contract_invalid_file",
+    "invalid_encoding": "contract_invalid_file",
+    "invalid_syntax": "contract_invalid_file",
+    "invalid_root": "contract_invalid_file",
+    "document_too_large": "contract_file_too_large",
+    "invalid_version": "contract_unsupported_version",
+    "unsupported_version": "contract_unsupported_version",
+    "lossy_normalization": "contract_profile_unsupported",
+    "missing_operation_id": "contract_operation_id_invalid",
+    "duplicate_operation_id": "contract_operation_id_invalid",
+    "operation_id_changed": "contract_operation_id_conflict",
+}
 
 def _request_id(request: Request) -> str:
     return getattr(request.state, "request_id", None) or str(uuid4())
@@ -45,6 +60,16 @@ def _error(request: Request, code: str, message: str, status_code: int, meta: di
     error = AdminAPIError(status_code, code, message, _request_id(request))
     error.meta = meta or {}
     return error
+
+
+def _contract_openapi_error_code(code: str) -> str:
+    return _CONTRACT_OPENAPI_ERROR_CODES.get(code, "contract_validation_failed")
+
+
+def _contract_revision_error_code(code: str) -> str:
+    if code == "service_exists":
+        return "contract_service_conflict"
+    return "contract_revision_conflict"
 
 def _redact(value: Any, *, key: str | None = None) -> Any:
     if key and (key.lower() == "raw" or SENSITIVE_KEY.search(key)):
@@ -408,11 +433,15 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         try:
             row = contract_service.create_service(project.id, service_key, payload.name, payload.description)
         except ContractRevisionConflictError as error:
-            raise _error(request, error.code, str(error), status.HTTP_409_CONFLICT) from error
+            raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT) from error
         return {"data": {"id": row.id, "project_id": row.project_id, "service_key": row.service_key, "name": row.name, "description": row.description, "current_published_revision_id": row.current_published_revision_id, "created_at": _row_value(row, "created_at"), "updated_at": _row_value(row, "updated_at"), "revisions": []}, "meta": {}, "request_id": _request_id(request)}
 
     @router.get("/contract-services")
     def list_contract_services(request: Request, project_key: str | None = None, status_filter: str | None = Query(default=None, alias="status"), keyword: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
+        try:
+            require_permission(current, "read")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         if project_key:
             project_id = project_context(request, project_key, None, current).id
         elif "admin" in current.permissions:
@@ -439,7 +468,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         with session_factory() as session:
             row = session.get(ContractServiceRow, service_id)
             if row is None:
-                raise _error(request, "service_not_found", "服务不存在", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "contract_service_not_found", "服务不存在", status.HTTP_404_NOT_FOUND)
             project = session.get(ProjectRow, row.project_id)
             if project is None:
                 raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
@@ -452,11 +481,15 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
 
     @router.get("/contract-services/{service_id}")
     def contract_service_detail(service_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        try:
+            require_permission(current, "read")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         row, project_id = _contract_service_project(request, service_id, current)
         try:
             detail = contract_service.service_detail(row.id, project_id)
         except LookupError as error:
-            raise _error(request, "service_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+            raise _error(request, "contract_service_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
         return {"data": detail, "meta": {}, "request_id": _request_id(request)}
 
     @router.post("/contract-services/{service_id}/revisions")
@@ -470,38 +503,40 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         if not isinstance(content, bytes):
             content = bytes(content)
         try:
-            actor = "admin"
-            revision, reused = contract_service.create_revision(row.id, filename, content, project_id, created_by=actor)
+            revision, reused = contract_service.create_revision(row.id, filename, content, project_id, created_by=V15_ACTOR_PLACEHOLDER)
         except OpenAPIContractError as error:
             validation_code = str(error.errors[0].get("code", "invalid_openapi_document")) if error.errors else "invalid_openapi_document"
             validation_status = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if validation_code == "document_too_large" else status.HTTP_422_UNPROCESSABLE_ENTITY
-            raise _error(request, validation_code, str(error), validation_status, meta={"validation_errors": error.errors}) from error
+            raise _error(request, _contract_openapi_error_code(validation_code), str(error), validation_status, meta={"validation_errors": error.errors}) from error
         except ContractRevisionConflictError as error:
-            raise _error(request, error.code, str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
+            raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:
-            raise _error(request, "service_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+            raise _error(request, "contract_service_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
         data = contract_service.get_revision(row.id, revision.revision_number, project_id)
         return {"data": data, "meta": {"reused": reused}, "request_id": _request_id(request)}
 
     @router.get("/contract-services/{service_id}/revisions/{revision_number}")
     def contract_revision_detail(service_id: int, revision_number: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        try:
+            require_permission(current, "read")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         row, project_id = _contract_service_project(request, service_id, current)
         try:
             data = contract_service.get_revision(row.id, revision_number, project_id)
         except LookupError as error:
-            raise _error(request, "revision_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+            raise _error(request, "contract_revision_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
         return {"data": data, "meta": {}, "request_id": _request_id(request)}
 
     @router.post("/contract-services/{service_id}/revisions/{revision_number}/publish")
     def publish_contract_revision(service_id: int, revision_number: int, payload: ContractPublishRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         row, project_id = _contract_service_project(request, service_id, current, require_admin=True)
         try:
-            actor = "admin"
-            revision, idempotent = contract_service.publish(row.id, revision_number, payload.expected_content_hash, project_id, published_by=actor)
+            revision, idempotent = contract_service.publish(row.id, revision_number, payload.expected_content_hash, project_id, published_by=V15_ACTOR_PLACEHOLDER)
         except ContractRevisionConflictError as error:
-            raise _error(request, error.code, str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
+            raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:
-            raise _error(request, "revision_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+            raise _error(request, "contract_revision_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
         data = contract_service.get_revision(row.id, revision.revision_number, project_id)
         return {"data": data, "meta": {"idempotent": idempotent}, "request_id": _request_id(request)}
 
