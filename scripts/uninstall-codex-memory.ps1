@@ -27,7 +27,7 @@ function Remove-CodexMemoryHooks {
     $current = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($null -eq $current.hooks) { return }
     $changed = $false
-    foreach ($eventName in @("UserPromptSubmit", "Stop")) {
+    foreach ($eventName in @("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd")) {
         $property = $current.hooks.PSObject.Properties[$eventName]
         if ($null -eq $property) { continue }
         $remaining = @($property.Value | Where-Object {

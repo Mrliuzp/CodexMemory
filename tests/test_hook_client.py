@@ -39,3 +39,9 @@ def test_append_and_context_return_json() -> None:
 
     assert client.append(_payload()) == {"path": "/api/v1/append"}
     assert client.context("erp", "修改订单") == {"path": "/api/v1/context"}
+
+
+def test_task_event_uses_v14_endpoint() -> None:
+    client = _client(lambda request: httpx.Response(200, json={"path": request.url.path}))
+
+    assert client.task_event({"project_key": "erp", "event_type": "Stop"}) == {"path": "/api/v1/task-events"}

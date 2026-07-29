@@ -95,16 +95,16 @@ def install_hooks(project_root: str | Path) -> Path:
     if path.exists():
         values = json.loads(path.read_text(encoding="utf-8"))
     hooks = values.setdefault("hooks", {})
-    for event in ("UserPromptSubmit", "Stop"):
+    for event in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"):
         groups = hooks.setdefault(event, [])
         if not isinstance(groups, list):
             raise ValueError(f"Hook 配置格式无效：{event}")
         if not any(
             isinstance(group, dict)
-            and any(isinstance(item, dict) and item.get("command") == f"python -m codex_memory.hook_cli {'user' if event == 'UserPromptSubmit' else 'stop'}" for item in group.get("hooks", []))
+            and any(isinstance(item, dict) and item.get("command") == f"python -m codex_memory.hook_cli {_hook_alias(event)}" for item in group.get("hooks", []))
             for group in groups
         ):
-            groups.append({"hooks": [_hook_entry("user" if event == "UserPromptSubmit" else "stop")]})
+            groups.append({"hooks": [_hook_entry(_hook_alias(event))]})
     path.write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -115,12 +115,12 @@ def uninstall_hooks(project_root: str | Path) -> Path:
         return path
     values = json.loads(path.read_text(encoding="utf-8"))
     hooks = values.get("hooks", {})
-    for event in ("UserPromptSubmit", "Stop"):
+    for event in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"):
         groups = hooks.get(event, [])
         hooks[event] = [
             group
             for group in groups
-            if not any(isinstance(item, dict) and str(item.get("command", "")).endswith("codex_memory.hook_cli user") or isinstance(item, dict) and str(item.get("command", "")).endswith("codex_memory.hook_cli stop") for item in group.get("hooks", []))
+            if not any(isinstance(item, dict) and "codex_memory.hook_cli" in str(item.get("command", "")) for item in group.get("hooks", []))
         ]
         if not hooks[event]:
             hooks.pop(event, None)
@@ -129,6 +129,16 @@ def uninstall_hooks(project_root: str | Path) -> Path:
     else:
         path.unlink(missing_ok=True)
     return path
+
+
+def _hook_alias(event: str) -> str:
+    return {
+        "UserPromptSubmit": "user",
+        "PreToolUse": "pre",
+        "PostToolUse": "post",
+        "Stop": "stop",
+        "SessionEnd": "sessionend",
+    }[event]
 
 
 def status(project_root: str | Path | None = None) -> dict[str, Any]:
