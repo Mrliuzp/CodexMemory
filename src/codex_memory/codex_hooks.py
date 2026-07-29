@@ -179,7 +179,7 @@ def _handle_tool_event(
     if event_type == "PreToolUse":
         baseline = _load_baseline(values, config.project_id or "", session_id)
         if baseline is None:
-            baseline = collect_git_snapshot(_cwd(event))
+            baseline = collect_git_snapshot(_cwd(event), project_root=_project_root(config, event))
             _save_baseline(values, config.project_id or "", session_id, _cwd(event), baseline)
         metadata["git_baseline"] = baseline.to_dict()
     payload = _task_payload(event_type, event, config.project_id or "", session_id, metadata)
@@ -215,7 +215,7 @@ def _handle_end_event(
         if message is not None:
             append_result = _archive_message(message, api, _outbox_safe(values))
 
-    current = collect_git_snapshot(_cwd(event))
+    current = collect_git_snapshot(_cwd(event), project_root=_project_root(config, event))
     baseline = _load_baseline(values, config.project_id or "", session_id)
     if baseline is None:
         baseline = GitSnapshot(available=False, error="基线未记录")
@@ -373,6 +373,12 @@ def _snapshot_from_dict(value: dict[str, Any]) -> GitSnapshot:
         untracked=tuple(item for item in untracked if isinstance(item, dict)),
         error=value.get("error") if isinstance(value.get("error"), str) else None,
     )
+
+
+def _project_root(config: Any, event: Mapping[str, Any]) -> Path:
+    if config.agents_file is not None:
+        return config.agents_file.parent.resolve()
+    return Path(_cwd(event)).resolve()
 
 
 def _queue(values: Mapping[str, str], project_id: str, payload: dict[str, Any], reason: str) -> bool:

@@ -97,6 +97,7 @@ def test_dirty_baseline_is_uncertain_and_non_git_is_available_as_limited_state(t
     result = handle_event("SessionEnd", _event(plain), {"CODEX_MEMORY_STATE_DIR": str(tmp_path / "state")}, client=client)
     assert result.error is None
     assert client.events[0]["metadata"]["change_manifest"]["uncertain"] is True
+    assert client.events[0]["metadata"]["change_manifest"]["baseline"]["available"] is False
     assert client.events[0]["metadata"]["change_manifest"]["current"]["available"] is False
 
 

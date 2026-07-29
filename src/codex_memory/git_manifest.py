@@ -40,13 +40,20 @@ class GitSnapshot:
         return result
 
 
-def collect_git_snapshot(cwd: str | Path, *, timeout: float = 2.0) -> GitSnapshot:
+def collect_git_snapshot(
+    cwd: str | Path,
+    *,
+    timeout: float = 2.0,
+    project_root: str | Path | None = None,
+) -> GitSnapshot:
     """只采集 Git 元数据，不读取 transcript，也不写入目标仓库。"""
     path = Path(cwd).resolve()
     root_output = _git(path, ["rev-parse", "--show-toplevel"], timeout)
     if root_output is None:
         return GitSnapshot(available=False, error="不可用")
     root = Path(root_output.strip()).resolve()
+    if project_root is not None and root != Path(project_root).resolve():
+        return GitSnapshot(available=False, error="目标目录不是独立 Git 根")
     branch_output = _git(root, ["branch", "--show-current"], timeout)
     head_output = _git(root, ["rev-parse", "HEAD"], timeout)
     status_output = _git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], timeout)
