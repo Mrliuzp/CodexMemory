@@ -287,6 +287,33 @@ def _validate_version(document: dict[str, Any]) -> None:
     raise OpenAPIContractError("只接受 OpenAPI 3.0.3 和 3.1.x", [_issue("unsupported_version", "只接受 OpenAPI 3.0.3 和 3.1.x", "/openapi")])
 
 
+def _validate_operation_id_constraints(document: dict[str, Any]) -> None:
+    """在通用规范校验前固定识别 operationId 身份错误。"""
+    paths = document.get("paths")
+    if not isinstance(paths, dict):
+        return
+    seen: set[str] = set()
+    for path in sorted(paths):
+        path_item = _resolve(paths[path], document)
+        if not isinstance(path_item, dict):
+            continue
+        for key, value in path_item.items():
+            method = str(key).lower()
+            if method not in METHOD_RANK:
+                continue
+            operation = _resolve(value, document)
+            if not isinstance(operation, dict):
+                continue
+            operation_path = f"/paths/{path}/{method}"
+            operation_id = operation.get("operationId")
+            if not isinstance(operation_id, str) or not operation_id.strip():
+                raise OpenAPIContractError("每个 operation 都必须有非空 operationId", [_issue("missing_operation_id", "每个 operation 都必须有非空 operationId", operation_path)])
+            operation_id = operation_id.strip()
+            if operation_id in seen:
+                raise OpenAPIContractError("Revision 内 operationId 必须唯一", [_issue("duplicate_operation_id", "Revision 内 operationId 必须唯一", operation_path, operation_id=operation_id)])
+            seen.add(operation_id)
+
+
 def _operations(document: dict[str, Any]) -> list[ParsedOperation]:
     paths = document.get("paths")
     if not isinstance(paths, dict):
@@ -420,6 +447,7 @@ def parse_and_normalize_openapi(filename: str, content: bytes, previous_operatio
             raise OpenAPIContractError("本地 $ref 无法解析", [_issue("unresolved_ref", "本地 $ref 无法解析", path, reference=reference)]) from error
     _validate_version(document)
     _reject_structural_features(document)
+    _validate_operation_id_constraints(document)
     _validate_openapi_spec(document)
     normalized = _normalize_nullable(document, from_openapi_30=document.get("openapi") == "3.0.3")
     if not isinstance(normalized, dict):

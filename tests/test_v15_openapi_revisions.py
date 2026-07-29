@@ -63,6 +63,21 @@ def test_validator_path_exclusive_bounds_and_operation_hash() -> None:
     assert "JSON 路径" in error.value.errors[0]["message"]
 
 
+def test_operation_id_constraints_precede_general_validator() -> None:
+    from codex_memory.api_operations import OpenAPIContractError, parse_and_normalize_openapi
+
+    duplicate = _document()
+    duplicate["paths"]["/other"] = {"get": {"operationId": "getPet", "responses": {"200": {"description": "成功"}}}}
+    with pytest.raises(OpenAPIContractError) as duplicate_error:
+        parse_and_normalize_openapi("contract.json", json.dumps(duplicate, ensure_ascii=False).encode())
+    assert duplicate_error.value.errors[0]["code"] == "duplicate_operation_id"
+    missing = _document()
+    missing["paths"]["/pets"]["get"].pop("operationId")
+    with pytest.raises(OpenAPIContractError) as missing_error:
+        parse_and_normalize_openapi("contract.json", json.dumps(missing, ensure_ascii=False).encode())
+    assert missing_error.value.errors[0]["code"] == "missing_operation_id"
+
+
 def test_structural_unsupported_fields_do_not_match_schema_properties() -> None:
     from codex_memory.api_operations import OpenAPIContractError, parse_and_normalize_openapi
 
@@ -290,6 +305,18 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     assert invalid_yaml.status_code == 422
     assert invalid_yaml.json()["error"]["code"] == "contract_validation_failed"
     assert invalid_yaml.json()["meta"]["validation_errors"][0]["code"] == "unsupported_scalar"
+    duplicate_document = _document()
+    duplicate_document["paths"]["/other"] = {"get": {"operationId": "getPet", "responses": {"200": {"description": "成功"}}}}
+    duplicate_operation = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("duplicate.json", json.dumps(duplicate_document, ensure_ascii=False).encode(), "application/json")}, headers=headers)
+    assert duplicate_operation.status_code == 422
+    assert duplicate_operation.json()["error"]["code"] == "contract_operation_id_invalid"
+    assert duplicate_operation.json()["meta"]["validation_errors"][0]["code"] == "duplicate_operation_id"
+    missing_document = _document()
+    missing_document["paths"]["/pets"]["get"].pop("operationId")
+    missing_operation = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("missing.json", json.dumps(missing_document, ensure_ascii=False).encode(), "application/json")}, headers=headers)
+    assert missing_operation.status_code == 422
+    assert missing_operation.json()["error"]["code"] == "contract_operation_id_invalid"
+    assert missing_operation.json()["meta"]["validation_errors"][0]["code"] == "missing_operation_id"
     too_large = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("large.json", b"{" + b" " * (2 * 1024 * 1024) + b"}", "application/json")}, headers=headers)
     assert too_large.status_code == 413
     assert too_large.json()["error"]["code"] == "contract_file_too_large"
