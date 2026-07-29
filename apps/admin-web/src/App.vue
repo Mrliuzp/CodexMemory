@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { Collection, Menu, Monitor, Notebook, SwitchButton, Upload, UserFilled } from '@element-plus/icons-vue'
+import { Collection, Document, Menu, Monitor, Notebook, SwitchButton, Upload, UserFilled } from '@element-plus/icons-vue'
 import { adminGet } from './api'
 import { useSessionStore } from './stores/session'
 
@@ -14,6 +14,7 @@ const nav = [
   { to: '/projects', label: '项目与作用域', icon: Collection },
   { to: '/records', label: '只读数据', icon: Notebook },
   { to: '/imports', label: '历史知识导入', icon: Upload },
+  { to: '/task-runs', label: '任务报告', icon: Document },
 ]
 const title = computed(() => route.meta.label || 'Codex Memory 管理后台')
 const isLoginPage = computed(() => route.name === 'login')

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codex_memory.codex_hooks import handle_assistant_stop, handle_user_prompt
 from codex_memory.hook_client import PermanentHookError, RetryableHookError
 
@@ -51,6 +53,14 @@ def test_disabled_project_does_not_call_api(tmp_path: Path) -> None:
 
     assert result == ""
     assert client.calls == []
+
+
+def test_disabled_project_does_not_create_client(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("codex_memory.codex_hooks._client", lambda _env: pytest.fail("禁用项目不得创建客户端"))
+
+    result = handle_user_prompt(_event(tmp_path), {})
+
+    assert result == ""
 
 
 def test_enabled_user_event_appends_then_returns_context(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@
 这是项目状态交接入口文件。当前状态以以下文档为准：
 
 - [PROJECT_HANDOFF.md](./PROJECT_HANDOFF.md)：项目总体状态、现行契约和下一步。
+- [CODEX_MEMORY_BLUEPRINT.md](./CODEX_MEMORY_BLUEPRINT.md)：后续版本路线及 V1.4 可信任务执行报告的唯一规格。
 - [HANDOFF_HISTORICAL_IMPORT.md](./HANDOFF_HISTORICAL_IMPORT.md)：V1.3.1 历史知识导入的详细实现、验收证据和风险。
 
 ## 文档优先级

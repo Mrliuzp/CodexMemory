@@ -36,7 +36,7 @@ function Merge-CodexMemoryHooks {
     }
 
     Backup-HooksConfig -Path $ConfigPath
-    foreach ($eventName in @("UserPromptSubmit", "Stop")) {
+    foreach ($eventName in @("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd")) {
         $property = $current.hooks.PSObject.Properties[$eventName]
         $existing = if ($null -eq $property) { @() } else { @($property.Value) }
         $retained = @($existing | Where-Object {

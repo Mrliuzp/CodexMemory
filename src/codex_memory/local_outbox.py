@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .hook_client import PermanentHookError, RetryableHookError
+from .hook_events import redact_credentials
 
 
 _PROJECT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -158,7 +159,7 @@ def _strip_sensitive(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [_strip_sensitive(item) for item in value]
-    return value
+    return redact_credentials(value)
 
 
 def _safe_reason(_reason: str) -> str:
