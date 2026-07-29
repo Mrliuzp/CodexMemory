@@ -13,7 +13,7 @@ export function getTaskRunReport(id, revision) {
 }
 
 export function unwrapData(payload) {
-  return payload?.data ?? payload ?? {}
+  return payload?.data ?? {}
 }
 
 export function extractTaskRuns(payload) {
@@ -27,6 +27,7 @@ export function extractPagination(payload, page = 1, pageSize = 50) {
     page: Number(meta.page ?? page),
     pageSize: Number(meta.page_size ?? pageSize),
     total: Number(meta.total ?? 0),
+    hasNext: Boolean(meta.has_next),
   }
 }
 

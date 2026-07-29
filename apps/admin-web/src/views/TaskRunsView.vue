@@ -98,6 +98,7 @@ onMounted(load)
     <el-table-column label="状态" width="120">
       <template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ displayStatus(scope.row.status) }}</el-tag></template>
     </el-table-column>
+    <el-table-column prop="current_report_revision" label="当前报告版本" width="130" />
     <el-table-column label="开始时间" min-width="180"><template #default="scope">{{ displayTime(scope.row.started_at) }}</template></el-table-column>
     <el-table-column label="结束时间" min-width="180"><template #default="scope">{{ displayTime(scope.row.ended_at) }}</template></el-table-column>
     <el-table-column label="操作" width="120" fixed="right">

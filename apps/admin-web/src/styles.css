@@ -28,5 +28,9 @@ body { margin: 0; min-width: 960px; }
 .task-description { margin-top: 18px; }
 .report-body { margin-top: 20px; color: #3f4d57; line-height: 1.7; white-space: pre-wrap; }
 .report-body h3 { color: #17212b; font-size: 15px; margin: 0 0 8px; }
+.report-text, .inline-pre { margin: 0; padding: 12px; background: #f7f9fa; color: #52616b; border-radius: 4px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.inline-pre { padding: 0; background: transparent; }
+.mono-value { font-family: Consolas, "Courier New", monospace; white-space: pre-wrap; word-break: break-word; }
+.report-versions-table { margin-top: 16px; }
 .manifest-table { margin-top: 18px; }
 .report-json { margin: 16px 0 0; padding: 12px; background: #f7f9fa; color: #52616b; border-radius: 4px; overflow: auto; }
