@@ -9,12 +9,13 @@ from sqlalchemy import select
 
 def _factory_and_client() -> tuple[object, TestClient]:
     from codex_memory.db import create_postgres_test_engine, create_schema, create_session_factory
-    from codex_memory.db_models import ApiKeyRow, ProjectRow, V11Base
+    from codex_memory.db_models import ApiKeyRow, ProjectRow, V11Base, V14Base
     from codex_memory.http_api import create_v1_app
 
     engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
+    V14Base.metadata.create_all(engine)
     factory = create_session_factory(engine)
     with factory() as session:
         first = ProjectRow(project_key="erp", name="ERP")

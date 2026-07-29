@@ -5,13 +5,21 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column
-
-from .v11_models import V11Base, IdType
+from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class TaskRunRow(V11Base):
+class V14Base(DeclarativeBase):
+    """V1.4 专用元数据，避免被 V1.1 的建表逻辑提前创建。"""
+
+
+IdType = BigInteger()
+
+# V1.4 表只依赖 projects.id。用同名占位表解析外键，但不共享 V11Base.metadata。
+Table("projects", V14Base.metadata, Column("id", IdType, primary_key=True))
+
+
+class TaskRunRow(V14Base):
     __tablename__ = "task_runs"
     __table_args__ = (
         UniqueConstraint("project_id", "session_key", name="uq_task_runs_project_session_key"),
@@ -35,7 +43,7 @@ class TaskRunRow(V11Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
-class TaskEventRow(V11Base):
+class TaskEventRow(V14Base):
     __tablename__ = "task_events"
     __table_args__ = (
         UniqueConstraint("task_run_id", "event_key", name="uq_task_events_run_event_key"),
@@ -66,7 +74,7 @@ class TaskEventRow(V11Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-class TaskReportRow(V11Base):
+class TaskReportRow(V14Base):
     __tablename__ = "task_reports"
     __table_args__ = (
         UniqueConstraint("task_run_id", "revision", name="uq_task_reports_run_revision"),
@@ -89,7 +97,7 @@ class TaskReportRow(V11Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-class TaskFileChangeRow(V11Base):
+class TaskFileChangeRow(V14Base):
     __tablename__ = "task_file_changes"
     __table_args__ = (
         UniqueConstraint("report_id", "change_index", name="uq_task_file_changes_report_index"),
@@ -111,7 +119,5 @@ class TaskFileChangeRow(V11Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-
-V14Base = V11Base
 
 __all__ = ["V14Base", "TaskRunRow", "TaskEventRow", "TaskReportRow", "TaskFileChangeRow"]
