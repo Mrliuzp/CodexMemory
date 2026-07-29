@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 import yaml
+from openapi_spec_validator import validate_spec
 
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
@@ -34,11 +35,15 @@ class ParsedOperation:
     summary: str | None
     tags: list[str]
     operation: dict[str, Any]
+    operation_hash: str
 
 
 @dataclass(frozen=True)
 class NormalizedOpenAPI:
+    source_document: dict[str, Any]
+    source_version: str
     document: dict[str, Any]
+    normalized_version: str
     content_hash: str
     operations: list[ParsedOperation]
     errors: list[dict[str, Any]]
@@ -95,6 +100,66 @@ def _validate_json_values(value: Any, path: str, seen: set[int]) -> None:
     raise OpenAPIContractError("OpenAPI 文档包含不支持的 YAML 标量", [_issue("unsupported_scalar", "OpenAPI 文档包含不支持的 YAML 标量，请使用字符串", path)])
 
 
+def _json_path(parts: Iterable[Any]) -> str:
+    values = [str(part).replace("~", "~0").replace("/", "~1") for part in parts]
+    return "/" + "/".join(values) if values else "/"
+
+
+def _validate_openapi_spec(document: dict[str, Any]) -> None:
+    try:
+        validate_spec(document)
+    except Exception as error:
+        path = _json_path(getattr(error, "path", ()))
+        message = f"OpenAPI 规范校验失败（JSON 路径 {path}）：{error}"
+        raise OpenAPIContractError(message, [_issue("openapi_validation_error", message, path)]) from error
+
+
+def _reject_structural_features(document: dict[str, Any]) -> None:
+    """只按 OpenAPI 对象位置拒绝 callbacks、webhooks 和 links。"""
+    if any(key in document for key in ("callbacks", "webhooks", "links")):
+        key = next(key for key in ("callbacks", "webhooks", "links") if key in document)
+        raise OpenAPIContractError(f"不支持 OpenAPI 字段：{key}", [_issue("unsupported_feature", f"不支持 OpenAPI 字段：{key}", f"/{key}")])
+    components = document.get("components")
+    if isinstance(components, dict):
+        for key in ("callbacks", "links", "webhooks"):
+            if key in components:
+                raise OpenAPIContractError(f"不支持 OpenAPI 字段：{key}", [_issue("unsupported_feature", f"不支持 OpenAPI 字段：{key}", f"/components/{key}")])
+
+    def inspect_path_item(path: str, value: Any) -> None:
+        path_item = _resolve(value, document)
+        if not isinstance(path_item, dict):
+            return
+        for method in METHOD_RANK:
+            if method not in path_item:
+                continue
+            operation = _resolve(path_item[method], document)
+            if not isinstance(operation, dict):
+                continue
+            if "callbacks" in operation:
+                raise OpenAPIContractError("不支持 OpenAPI 字段：callbacks", [_issue("unsupported_feature", "不支持 OpenAPI 字段：callbacks", f"/paths/{path}/{method}/callbacks")])
+            responses = operation.get("responses")
+            if isinstance(responses, dict):
+                for response_name, response_value in responses.items():
+                    response = _resolve(response_value, document)
+                    if isinstance(response, dict) and "links" in response:
+                        raise OpenAPIContractError("不支持 OpenAPI 字段：links", [_issue("unsupported_feature", "不支持 OpenAPI 字段：links", f"/paths/{path}/{method}/responses/{response_name}/links")])
+
+    paths = document.get("paths")
+    if isinstance(paths, dict):
+        for path, path_item in paths.items():
+            inspect_path_item(str(path), path_item)
+    path_items = components.get("pathItems") if isinstance(components, dict) else None
+    if isinstance(path_items, dict):
+        for name, path_item in path_items.items():
+            inspect_path_item(f"components/pathItems/{name}", path_item)
+    responses = components.get("responses") if isinstance(components, dict) else None
+    if isinstance(responses, dict):
+        for name, response_value in responses.items():
+            response = _resolve(response_value, document)
+            if isinstance(response, dict) and "links" in response:
+                raise OpenAPIContractError("不支持 OpenAPI 字段：links", [_issue("unsupported_feature", "不支持 OpenAPI 字段：links", f"/components/responses/{name}/links")])
+
+
 def _decode_document(filename: str, content: bytes) -> dict[str, Any]:
     if not isinstance(filename, str) or not filename.lower().endswith((".json", ".yaml", ".yml")):
         raise OpenAPIContractError("文件扩展名必须是 .json、.yaml 或 .yml", [_issue("invalid_extension", "文件扩展名必须是 .json、.yaml 或 .yml")])
@@ -126,8 +191,6 @@ def _walk(value: Any, path: str, depth: int, refs: list[tuple[str, str]], seen: 
             if not isinstance(key, str):
                 raise OpenAPIContractError("OpenAPI 对象键必须是字符串", [_issue("invalid_key", "OpenAPI 对象键必须是字符串", path)])
             child_path = f"{path}/{key}" if path else f"/{key}"
-            if key in {"callbacks", "webhooks", "links"}:
-                raise OpenAPIContractError(f"不支持 OpenAPI 字段：{key}", [_issue("unsupported_feature", f"不支持 OpenAPI 字段：{key}", child_path)])
             if key == "$ref":
                 if not isinstance(item, str) or not item.startswith("#"):
                     raise OpenAPIContractError("只允许本地 $ref", [_issue("external_ref", "只允许本地 $ref", child_path)])
@@ -177,12 +240,24 @@ def _resolve(value: Any, document: dict[str, Any], stack: tuple[str, ...] = ()) 
     return merged
 
 
-def _normalize_nullable(value: Any) -> Any:
+def _normalize_nullable(value: Any, *, from_openapi_30: bool = False, path: str = "") -> Any:
     if isinstance(value, list):
-        return [_normalize_nullable(item) for item in value]
+        return [_normalize_nullable(item, from_openapi_30=from_openapi_30, path=f"{path}/{index}") for index, item in enumerate(value)]
     if not isinstance(value, dict):
         return value
-    normalized = {key: _normalize_nullable(item) for key, item in value.items() if key != "nullable"}
+    normalized = {key: _normalize_nullable(item, from_openapi_30=from_openapi_30, path=f"{path}/{key}" if path else f"/{key}") for key, item in value.items() if key != "nullable"}
+    if from_openapi_30:
+        for bound, exclusive in (("minimum", "exclusiveMinimum"), ("maximum", "exclusiveMaximum")):
+            flag = value.get(exclusive)
+            if isinstance(flag, bool):
+                if not flag:
+                    normalized.pop(exclusive, None)
+                else:
+                    number = value.get(bound)
+                    if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(float(number)):
+                        raise OpenAPIContractError("无法无损归一化 OpenAPI 3.0.3 排他边界", [_issue("lossy_normalization", "无法无损归一化 OpenAPI 3.0.3 排他边界", f"{path}/{exclusive}" if path else f"/{exclusive}")])
+                    normalized.pop(bound, None)
+                    normalized[exclusive] = number
     if value.get("nullable") is True:
         schema = dict(normalized)
         schema_type = schema.get("type")
@@ -238,7 +313,9 @@ def _operations(document: dict[str, Any]) -> list[ParsedOperation]:
             tags = operation.get("tags", [])
             if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
                 raise OpenAPIContractError("operation tags 必须是字符串数组", [_issue("invalid_tags", "operation tags 必须是字符串数组", f"/paths/{path}/{method}")])
-            result.append(ParsedOperation(method=method.upper(), path=path, operation_id=operation_id, summary=operation.get("summary") if isinstance(operation.get("summary"), str) else None, tags=sorted(set(tags)), operation=_canonical(operation)))
+            operation_document = _canonical(operation)
+            operation_serialized = json.dumps(operation_document, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            result.append(ParsedOperation(method=method.upper(), path=path, operation_id=operation_id, summary=operation.get("summary") if isinstance(operation.get("summary"), str) else None, tags=sorted(set(tags)), operation=operation_document, operation_hash=hashlib.sha256(operation_serialized.encode("utf-8")).hexdigest()))
             if len(result) > MAX_OPERATIONS:
                 raise OpenAPIContractError("OpenAPI operations 不能超过 500 个", [_issue("too_many_operations", "OpenAPI operations 不能超过 500 个", "/paths")])
     return result
@@ -267,6 +344,23 @@ def generate_markdown(document: dict[str, Any], operations: Iterable[ParsedOpera
     lines = [f"# {title}", "", "- OpenAPI：3.1.0", "- Profile：v1"]
     if version:
         lines.append(f"- 接口版本：{version}")
+    lines.extend(["", "## 服务器", ""])
+    servers = document.get("servers") if isinstance(document.get("servers"), list) else []
+    if servers:
+        for server in sorted((item for item in servers if isinstance(item, dict)), key=lambda item: str(item.get("url", ""))):
+            url = str(server.get("url", ""))
+            description = server.get("description")
+            lines.append(f"- `{url}`" + (f"：{description}" if isinstance(description, str) and description else ""))
+    else:
+        lines.append("未声明服务器。")
+    lines.extend(["", "## 鉴权", ""])
+    security = document.get("security")
+    if isinstance(security, list) and security:
+        for requirement in sorted((item for item in security if isinstance(item, dict)), key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))):
+            names = sorted(str(name) for name in requirement)
+            lines.append(f"- {', '.join(f'`{name}`' for name in names) or '匿名'}")
+    else:
+        lines.append("未声明全局鉴权。")
     lines.extend(["", "## 接口列表", ""])
     ordered = sorted(operations, key=lambda item: (item.path, METHOD_RANK.get(item.method.lower(), 99), item.method))
     if not ordered:
@@ -278,7 +372,40 @@ def generate_markdown(document: dict[str, Any], operations: Iterable[ParsedOpera
             lines.append(f"- 摘要：{operation.summary.replace(chr(10), ' ')}")
         if operation.tags:
             lines.append(f"- 标签：{', '.join(operation.tags)}")
+        request_body = operation.operation.get("requestBody")
+        parameters = operation.operation.get("parameters")
+        lines.extend(["", "#### 请求"])
+        if isinstance(parameters, list) and parameters:
+            lines.append("- 参数：")
+            for parameter in sorted((item for item in parameters if isinstance(item, dict)), key=lambda item: (str(item.get("in", "")), str(item.get("name", "")))):
+                lines.append(f"  - `{parameter.get('in', '')}` `{parameter.get('name', '')}`")
+        if isinstance(request_body, dict):
+            content = request_body.get("content")
+            if isinstance(content, dict):
+                lines.append(f"- Content-Type：{', '.join(sorted(str(media_type) for media_type in content))}")
+            elif request_body:
+                lines.append("- 请求体已声明。")
+        if not ((isinstance(parameters, list) and parameters) or isinstance(request_body, dict)):
+            lines.append("无请求参数或请求体。")
+        lines.extend(["", "#### 响应"])
+        responses = operation.operation.get("responses")
+        if isinstance(responses, dict) and responses:
+            for response_code in sorted(responses, key=str):
+                response = responses[response_code]
+                description = response.get("description") if isinstance(response, dict) else None
+                lines.append(f"- `{response_code}`" + (f"：{description}" if isinstance(description, str) and description else ""))
+        else:
+            lines.append("未声明响应。")
         lines.append("")
+    components = document.get("components")
+    schemas = components.get("schemas") if isinstance(components, dict) else None
+    lines.extend(["## 公共 Schema", ""])
+    if isinstance(schemas, dict) and schemas:
+        for name in sorted(schemas):
+            schema_json = json.dumps(schemas[name], ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
+            lines.extend([f"### Schema `{name}`", "", "```json", schema_json, "```", ""])
+    else:
+        lines.append("未声明公共 Schema。")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -292,7 +419,9 @@ def parse_and_normalize_openapi(filename: str, content: bytes, previous_operatio
         except KeyError as error:
             raise OpenAPIContractError("本地 $ref 无法解析", [_issue("unresolved_ref", "本地 $ref 无法解析", path, reference=reference)]) from error
     _validate_version(document)
-    normalized = _normalize_nullable(document)
+    _reject_structural_features(document)
+    _validate_openapi_spec(document)
+    normalized = _normalize_nullable(document, from_openapi_30=document.get("openapi") == "3.0.3")
     if not isinstance(normalized, dict):
         raise OpenAPIContractError("OpenAPI 文档根节点必须是对象")
     normalized["openapi"] = "3.1.0"
@@ -302,7 +431,7 @@ def parse_and_normalize_openapi(filename: str, content: bytes, previous_operatio
     warnings = _transition_warnings(operations, previous_operations)
     serialized = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-    return NormalizedOpenAPI(normalized, digest, operations, [], warnings, generate_markdown(normalized, operations))
+    return NormalizedOpenAPI(document, str(document["openapi"]), normalized, "3.1.0", digest, operations, [], warnings, generate_markdown(normalized, operations))
 
 
 # 提供便于单元测试和外部调用的简短别名。
