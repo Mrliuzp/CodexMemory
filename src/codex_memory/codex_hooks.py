@@ -20,7 +20,7 @@ from .hook_events import (
 )
 from .hook_state import HookStateError, HookStateStore
 from .local_outbox import LocalOutbox, ReplayReport
-from .project_config import ProjectConfigError, load_project_memory_config
+from .project_config import ProjectConfigError, ProjectMemoryConfig, load_project_memory_config
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ def handle_user_prompt(
     """保留旧 append/context 行为，同时记录 V1.4 UserPromptSubmit。"""
     values = _environment(env)
     try:
-        config = load_project_memory_config(_cwd(event))
+        config = _load_hook_config(_cwd(event))
         if not config.enabled:
             return ""
         message = parse_user_event(event, project_id=config.project_id or "")
@@ -167,7 +167,7 @@ def _handle_tool_event(
 ) -> HookResult:
     values = _environment(env)
     try:
-        config = load_project_memory_config(_cwd(event))
+        config = _load_hook_config(_cwd(event))
         if not config.enabled:
             return HookResult()
         session_id = _event_string(event, "session_id", "session_key")
@@ -196,7 +196,7 @@ def _handle_end_event(
 ) -> HookResult:
     values = _environment(env)
     try:
-        config = load_project_memory_config(_cwd(event))
+        config = _load_hook_config(_cwd(event))
         if not config.enabled:
             return HookResult()
         session_id = _event_string(event, "session_id", "session_key")
@@ -404,6 +404,15 @@ def _outbox_safe(env: Mapping[str, str]) -> LocalOutbox | None:
 
 def _environment(env: Mapping[str, str] | None) -> dict[str, str]:
     return dict(os.environ if env is None else env)
+
+
+def _load_hook_config(cwd: str) -> ProjectMemoryConfig:
+    """Hook 只对当前工作目录对应的项目生效，避免误继承外层项目配置。"""
+    config = load_project_memory_config(cwd)
+    if config.enabled and config.agents_file is not None:
+        if Path(cwd).resolve() != config.agents_file.parent.resolve():
+            return ProjectMemoryConfig(False, None, config.mcp_server, config.agents_file)
+    return config
 
 
 def _cwd(event: Mapping[str, Any]) -> str:
