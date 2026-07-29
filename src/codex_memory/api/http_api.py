@@ -66,7 +66,7 @@ def create_v1_app(session_factory: Any) -> FastAPI:
     @app.exception_handler(AdminAPIError)
     async def admin_error_handler(request: Request, exc: AdminAPIError) -> JSONResponse:
         headers = {"X-Request-ID": exc.request_id, **exc.headers}
-        return JSONResponse(status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message, "request_id": exc.request_id}}, headers=headers)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": exc.code, "message": exc.message}, "meta": getattr(exc, "meta", {}), "request_id": exc.request_id}, headers=headers)
     bearer = HTTPBearer(auto_error=False)
 
     def current_principal(

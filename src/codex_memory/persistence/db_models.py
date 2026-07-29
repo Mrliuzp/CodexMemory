@@ -174,3 +174,5 @@ from .v11_models import (
     SecurityAuditRow,
     WorkerInstanceRow,
 )
+
+from .v15_models import ApiOperationRow, ContractOperationRow, ContractRevisionRow, ContractServiceRow, V15Base
