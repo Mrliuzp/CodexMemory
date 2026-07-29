@@ -28,6 +28,7 @@ class ContractServiceRow(V15Base):
 
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    current_published_revision_id: Mapped[int | None] = mapped_column(ForeignKey("contract_revisions.id", ondelete="SET NULL"), index=True)
     service_key: Mapped[str] = mapped_column(String(150), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -52,13 +53,19 @@ class ContractRevisionRow(V15Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="proposed", server_default="proposed")
     source_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     source_extension: Mapped[str] = mapped_column(String(10), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    normalized_version: Mapped[str] = mapped_column(String(20), nullable=False, default="3.1.0", server_default="3.1.0")
     profile_version: Mapped[str] = mapped_column(String(20), nullable=False, default="v1", server_default="v1")
+    source_document: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     normalized_document: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    validation_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     validation_result: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system", server_default="system")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_by: Mapped[str | None] = mapped_column(String(255))
 
 
 class ApiOperationRow(V15Base):
@@ -77,6 +84,7 @@ class ApiOperationRow(V15Base):
     method: Mapped[str] = mapped_column(String(10), nullable=False)
     path: Mapped[str] = mapped_column(String(1000), nullable=False)
     operation_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    operation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     summary: Mapped[str | None] = mapped_column(String(1000))
     tags_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     operation_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)

@@ -44,11 +44,18 @@ class ContractRevisionService:
             session.refresh(row)
             return row
 
-    def list_services(self, project_id: int | None = None) -> list[ContractServiceRow]:
+    def list_services(self, project_id: int | None = None, status: str | None = None, keyword: str | None = None) -> list[ContractServiceRow]:
         with self.session_factory() as session:
-            query = select(ContractServiceRow)
+            query = select(ContractServiceRow).distinct()
             if project_id is not None:
                 query = query.where(ContractServiceRow.project_id == project_id)
+            if status or keyword:
+                query = query.outerjoin(ContractRevisionRow, ContractRevisionRow.service_id == ContractServiceRow.id)
+            if status:
+                query = query.where(ContractRevisionRow.status == status)
+            if keyword:
+                pattern = f"%{keyword.strip()}%"
+                query = query.where(ContractServiceRow.service_key.ilike(pattern) | ContractServiceRow.name.ilike(pattern))
             rows = session.scalars(query.order_by(ContractServiceRow.created_at, ContractServiceRow.id)).all()
             for row in rows:
                 session.expunge(row)
@@ -76,7 +83,7 @@ class ContractRevisionService:
                 summaries.append(summary)
             return {"service": _service_dict(service), "revisions": summaries}
 
-    def create_revision(self, service_id: int, filename: str, content: bytes, project_id: int | None = None) -> tuple[ContractRevisionRow, bool]:
+    def create_revision(self, service_id: int, filename: str, content: bytes, project_id: int | None = None, created_by: str = "system") -> tuple[ContractRevisionRow, bool]:
         # 先完成 CPU 侧解析，数据库事务只负责锁服务、编号和写入。
         parsed = parse_and_normalize_openapi(filename, content)
         for _attempt in range(3):
@@ -93,7 +100,11 @@ class ContractRevisionService:
                         if existing is not None:
                             session.expunge(existing)
                             return existing, True
-                        previous_revision = session.scalar(select(ContractRevisionRow).where(ContractRevisionRow.service_id == service.id).order_by(ContractRevisionRow.revision_number.desc()))
+                        previous_revision = None
+                        if service.current_published_revision_id is not None:
+                            previous_revision = session.get(ContractRevisionRow, service.current_published_revision_id)
+                        if previous_revision is None:
+                            previous_revision = session.scalar(select(ContractRevisionRow).where(ContractRevisionRow.service_id == service.id, ContractRevisionRow.status == "published").order_by(ContractRevisionRow.revision_number.desc()))
                         previous_operations: list[dict[str, Any]] = []
                         if previous_revision is not None:
                             previous_operations = [
@@ -112,11 +123,16 @@ class ContractRevisionService:
                             status="proposed",
                             source_filename=filename,
                             source_extension=extension,
+                            source_version=parsed.source_version,
+                            normalized_version=parsed.normalized_version,
                             profile_version="v1",
+                            source_document=parsed.source_document,
                             normalized_document=parsed.document,
                             content_hash=parsed.content_hash,
+                            validation_summary={"errors": parsed.errors, "warnings": parsed.warnings},
                             validation_result={"errors": parsed.errors, "warnings": parsed.warnings},
                             markdown=parsed.markdown,
+                            created_by=created_by or "system",
                         )
                         session.add(revision)
                         session.flush()
@@ -129,6 +145,7 @@ class ContractRevisionService:
                                     method=operation.method,
                                     path=operation.path,
                                     operation_id=operation.operation_id,
+                                    operation_hash=operation.operation_hash,
                                     summary=operation.summary,
                                     tags_json=operation.tags,
                                     operation_json=operation.operation,
@@ -162,9 +179,15 @@ class ContractRevisionService:
                 "operation_count": len(operations),
             }
 
-    def publish(self, service_id: int, revision_number: int, expected_content_hash: str, project_id: int | None = None) -> tuple[ContractRevisionRow, bool]:
+    def publish(self, service_id: int, revision_number: int, expected_content_hash: str, project_id: int | None = None, published_by: str = "admin") -> tuple[ContractRevisionRow, bool]:
         with self.session_factory() as session:
             with session.begin():
+                service_query = select(ContractServiceRow).where(ContractServiceRow.id == service_id).with_for_update()
+                if project_id is not None:
+                    service_query = service_query.where(ContractServiceRow.project_id == project_id)
+                service = session.scalar(service_query)
+                if service is None:
+                    raise LookupError("服务不存在")
                 query = select(ContractRevisionRow).where(ContractRevisionRow.service_id == service_id, ContractRevisionRow.revision_number == revision_number).with_for_update()
                 if project_id is not None:
                     query = query.where(ContractRevisionRow.project_id == project_id)
@@ -174,35 +197,42 @@ class ContractRevisionService:
                 if revision.content_hash != expected_content_hash:
                     raise ContractRevisionConflictError("expected_content_hash 不匹配", "content_hash_mismatch", {"expected_content_hash": expected_content_hash, "content_hash": revision.content_hash})
                 if revision.status == "published":
+                    service.current_published_revision_id = revision.id
                     session.expunge(revision)
                     return revision, True
                 if revision.status != "proposed":
                     raise ContractRevisionConflictError("只有 proposed Revision 可以发布", "revision_not_publishable")
-                current = session.scalar(select(ContractRevisionRow).where(ContractRevisionRow.service_id == service_id, ContractRevisionRow.status == "published").with_for_update())
+                current = None
+                if service.current_published_revision_id is not None and service.current_published_revision_id != revision.id:
+                    current = session.scalar(select(ContractRevisionRow).where(ContractRevisionRow.id == service.current_published_revision_id).with_for_update())
+                if current is None:
+                    current = session.scalar(select(ContractRevisionRow).where(ContractRevisionRow.service_id == service_id, ContractRevisionRow.status == "published").with_for_update())
                 if current is not None and current.id != revision.id:
                     current.status = "superseded"
                 revision.status = "published"
                 revision.published_at = datetime.now(timezone.utc)
+                revision.published_by = published_by or "admin"
+                service.current_published_revision_id = revision.id
                 session.flush()
                 session.expunge(revision)
                 return revision, False
 
 
 def _service_dict(row: ContractServiceRow) -> dict[str, Any]:
-    return {"id": row.id, "project_id": row.project_id, "service_key": row.service_key, "name": row.name, "description": row.description, "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
+    return {"id": row.id, "project_id": row.project_id, "service_key": row.service_key, "name": row.name, "description": row.description, "current_published_revision_id": row.current_published_revision_id, "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
 
 
 def _revision_summary(row: ContractRevisionRow) -> dict[str, Any]:
-    return {"id": row.id, "revision_number": row.revision_number, "status": row.status, "content_hash": row.content_hash, "profile_version": row.profile_version, "operation_count": 0, "created_at": _iso(row.created_at), "published_at": _iso(row.published_at)}
+    return {"id": row.id, "revision_number": row.revision_number, "status": row.status, "content_hash": row.content_hash, "source_version": row.source_version, "normalized_version": row.normalized_version, "profile_version": row.profile_version, "operation_count": 0, "created_by": row.created_by, "published_by": row.published_by, "created_at": _iso(row.created_at), "published_at": _iso(row.published_at)}
 
 
 def _revision_dict(row: ContractRevisionRow) -> dict[str, Any]:
-    validation = row.validation_result or {}
-    return {"id": row.id, "project_id": row.project_id, "service_id": row.service_id, "revision_number": row.revision_number, "status": row.status, "source_filename": row.source_filename, "source_extension": row.source_extension, "profile_version": row.profile_version, "content_hash": row.content_hash, "validation": validation, "validation_result": validation, "warnings": validation.get("warnings", []), "normalized_document": row.normalized_document, "document": row.normalized_document, "markdown": row.markdown, "created_at": _iso(row.created_at), "published_at": _iso(row.published_at)}
+    validation = row.validation_summary or row.validation_result or {}
+    return {"id": row.id, "project_id": row.project_id, "service_id": row.service_id, "revision_number": row.revision_number, "status": row.status, "source_filename": row.source_filename, "source_extension": row.source_extension, "source_version": row.source_version, "normalized_version": row.normalized_version, "profile_version": row.profile_version, "content_hash": row.content_hash, "validation": validation, "validation_result": validation, "validation_summary": validation, "warnings": validation.get("warnings", []), "source_document": row.source_document, "normalized_document": row.normalized_document, "document": row.normalized_document, "markdown": row.markdown, "created_by": row.created_by, "published_by": row.published_by, "created_at": _iso(row.created_at), "published_at": _iso(row.published_at)}
 
 
 def _operation_dict(row: ApiOperationRow) -> dict[str, Any]:
-    return {"id": row.id, "method": row.method, "path": row.path, "operation_id": row.operation_id, "operationId": row.operation_id, "summary": row.summary, "tags": row.tags_json, "operation": row.operation_json}
+    return {"id": row.id, "method": row.method, "path": row.path, "operation_id": row.operation_id, "operationId": row.operation_id, "operation_hash": row.operation_hash, "summary": row.summary, "tags": row.tags_json, "operation": row.operation_json}
 
 
 def _iso(value: Any) -> str | None:
