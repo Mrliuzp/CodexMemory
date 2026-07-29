@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..auth import PermissionDenied, ProjectAccessDenied, Principal, TokenAuthenticationError, authenticate_bearer, require_permission, require_project_access, issue_admin_session
 from ..db_models import AuditLogRow, MemoryRow, MessageRow, ProjectRow
 from ..v11_models import ImportBatchRow, ImportFileRow, ImportIssueRow, ImportUploadPartRow, MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, ReferenceCandidateRow, RetrievalAuditRow
+from ..persistence.v14_models import TaskEventRow, TaskFileChangeRow, TaskReportRow, TaskRunRow
 
 SORT_FIELDS = {"created_at", "updated_at", "id", "status", "project_key", "title"}
 SENSITIVE_KEY = re.compile(r"(?:api[_-]?key|authorization|bearer|password|secret|token|credential)", re.I)
@@ -142,6 +143,114 @@ class ImportReviewRequest(BaseModel):
 class AdminLoginRequest(BaseModel):
     username: str
     password: str
+
+
+class TaskRunListItem(BaseModel):
+    id: int
+    project_id: int
+    session_key: str
+    status: str
+    started_at: str | None
+    ended_at: str | None
+    current_report_revision: int
+
+
+class TaskRunPageMeta(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    has_next: bool
+
+
+class TaskRunListResponse(BaseModel):
+    data: list[TaskRunListItem]
+    meta: TaskRunPageMeta
+    request_id: str
+
+
+class TaskGitBaseline(BaseModel):
+    branch: str | None
+    head: str | None
+    status_porcelain: str | None
+    diff_hash: str | None
+    untracked: list[Any] | None
+    available: bool | None
+
+
+class TaskEventItem(BaseModel):
+    id: int
+    event_key: str
+    event_type: str
+    sequence_no: int
+    occurred_at: str | None
+    content_hash: str
+    command_summary: str | None
+    result_summary: str | None
+    exit_code: int | None
+    redaction_applied: bool
+    truncated: bool
+
+
+class TaskReportSummary(BaseModel):
+    id: int
+    revision: int
+    report_kind: str
+    status: str
+    uncertain: bool
+    truncated: bool
+    created_at: str | None
+
+
+class TaskRunDetail(BaseModel):
+    id: int
+    project_id: int
+    session_key: str
+    status: str
+    started_at: str | None
+    ended_at: str | None
+    current_report_revision: int
+    git_baseline: TaskGitBaseline
+    events: list[TaskEventItem]
+    reports: list[TaskReportSummary]
+
+
+class TaskRunDetailResponse(BaseModel):
+    data: TaskRunDetail
+    request_id: str
+
+
+class TaskFileChangeItem(BaseModel):
+    id: int
+    change_index: int
+    path: str
+    old_path: str | None
+    change_type: str
+    before_hash: str | None
+    after_hash: str | None
+    attribution: str
+    metadata: dict[str, Any]
+
+
+class TaskReportDetail(BaseModel):
+    id: int
+    project_id: int
+    task_run_id: int
+    source_event_id: int
+    revision: int
+    report_kind: str
+    status: str
+    report_json: dict[str, Any]
+    body: str
+    content_hash: str
+    uncertain: bool
+    truncated: bool
+    created_at: str | None
+    file_changes: list[TaskFileChangeItem]
+
+
+class TaskReportDetailResponse(BaseModel):
+    data: TaskReportDetail
+    request_id: str
 
 def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     router = APIRouter(prefix="/api/admin/v1", tags=["admin-v1"])
@@ -758,6 +867,101 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             session.add(AuditLogRow(project_id=project.id, event_type="import.batch.cancelled", subject_type="import_batch", subject_id=str(batch.id), metadata_json={"request_id": _request_id(request)}))
             session.commit()
             return {"data": {"id": batch.id, "status": batch.status, "cancelled_at": _row_value(batch, "cancelled_at")}, "request_id": _request_id(request)}
+
+    @router.get("/task-runs", response_model=TaskRunListResponse)
+    def task_runs(
+        request: Request,
+        project_key: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        page, page_size, _sort, _order, request_id = paging
+        project_id: int | None = None
+        if project_key:
+            project_id = project_context(request, project_key, None, current).id
+        elif "admin" not in current.permissions:
+            project_id = project_context(request, current.project_key, None, current).id
+        with session_factory() as session:
+            query = select(TaskRunRow)
+            if project_id is not None:
+                query = query.where(TaskRunRow.project_id == project_id)
+            total = int(session.scalar(select(func.count()).select_from(query.subquery())) or 0)
+            rows = session.scalars(query.order_by(TaskRunRow.created_at.desc(), TaskRunRow.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+            data = [
+                TaskRunListItem(
+                    id=row.id,
+                    project_id=row.project_id,
+                    session_key=row.session_key,
+                    status=row.status,
+                    started_at=_row_value(row, "started_at"),
+                    ended_at=_row_value(row, "ended_at"),
+                    current_report_revision=row.current_report_revision,
+                ).model_dump()
+                for row in rows
+            ]
+        return {"data": data, "meta": {"page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}, "request_id": request_id}
+
+    def _task_run_for_admin(request: Request, task_run_id: int, current: Principal) -> TaskRunRow:
+        with session_factory() as session:
+            run = session.get(TaskRunRow, task_run_id)
+            if run is None:
+                raise _error(request, "task_run_not_found", "任务运行不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, run.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            session.expunge(run)
+            return run
+
+    @router.get("/task-runs/{task_run_id}", response_model=TaskRunDetailResponse)
+    def task_run_detail(task_run_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        run = _task_run_for_admin(request, task_run_id, current)
+        with session_factory() as session:
+            events = session.scalars(select(TaskEventRow).where(TaskEventRow.task_run_id == run.id).order_by(TaskEventRow.sequence_no, TaskEventRow.id)).all()
+            reports = session.scalars(select(TaskReportRow).where(TaskReportRow.task_run_id == run.id).order_by(TaskReportRow.revision)).all()
+            detail = TaskRunDetail(
+                id=run.id,
+                project_id=run.project_id,
+                session_key=run.session_key,
+                status=run.status,
+                started_at=_row_value(run, "started_at"),
+                ended_at=_row_value(run, "ended_at"),
+                current_report_revision=run.current_report_revision,
+                git_baseline=TaskGitBaseline(branch=run.git_branch, head=run.git_head, status_porcelain=run.git_status_porcelain, diff_hash=run.git_diff_hash, untracked=run.git_untracked_json, available=run.git_available),
+                events=[TaskEventItem(id=item.id, event_key=item.event_key, event_type=item.event_type, sequence_no=item.sequence_no, occurred_at=_row_value(item, "occurred_at"), content_hash=item.content_hash, command_summary=item.command_summary, result_summary=item.result_summary, exit_code=item.exit_code, redaction_applied=item.redaction_applied, truncated=item.truncated) for item in events],
+                reports=[TaskReportSummary(id=item.id, revision=item.revision, report_kind=item.report_kind, status=item.status, uncertain=item.uncertain, truncated=item.truncated, created_at=_row_value(item, "created_at")) for item in reports],
+            )
+        return {"data": detail.model_dump(), "request_id": _request_id(request)}
+
+    @router.get("/task-runs/{task_run_id}/reports/{revision}", response_model=TaskReportDetailResponse)
+    def task_report_detail(task_run_id: int, revision: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        _task_run_for_admin(request, task_run_id, current)
+        with session_factory() as session:
+            report = session.scalar(select(TaskReportRow).where(TaskReportRow.task_run_id == task_run_id, TaskReportRow.revision == revision))
+            if report is None:
+                raise _error(request, "task_report_not_found", "任务报告不存在", status.HTTP_404_NOT_FOUND)
+            changes = session.scalars(select(TaskFileChangeRow).where(TaskFileChangeRow.report_id == report.id).order_by(TaskFileChangeRow.change_index)).all()
+            detail = TaskReportDetail(
+                id=report.id,
+                project_id=report.project_id,
+                task_run_id=report.task_run_id,
+                source_event_id=report.source_event_id,
+                revision=report.revision,
+                report_kind=report.report_kind,
+                status=report.status,
+                report_json=report.report_json,
+                body=report.body,
+                content_hash=report.content_hash,
+                uncertain=report.uncertain,
+                truncated=report.truncated,
+                created_at=_row_value(report, "created_at"),
+                file_changes=[TaskFileChangeItem(id=item.id, change_index=item.change_index, path=item.path, old_path=item.old_path, change_type=item.change_type, before_hash=item.before_hash, after_hash=item.after_hash, attribution=item.attribution, metadata=item.metadata_json) for item in changes],
+            )
+        return {"data": detail.model_dump(), "request_id": _request_id(request)}
+
     @router.get("/system/status")
     def system_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         try:

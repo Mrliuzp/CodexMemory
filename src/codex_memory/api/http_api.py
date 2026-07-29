@@ -15,6 +15,7 @@ from .v1_schemas import (
     MemoryV1Request,
     ReflectV1Request,
     SearchV1Request,
+    TaskEventV14Request,
 )
 
 
@@ -47,12 +48,15 @@ def create_v1_app(session_factory: Any) -> FastAPI:
         MemoryV1Request,
         ReflectV1Request,
         SearchV1Request,
+        TaskEventV14Request,
     )
     from .v1_service import AppendConflictError, V1MemoryService
+    from ..v14_service import TaskEventConflictError, TaskEventService, TaskEventValidationError
     from .v11_embedding import EmbeddingProfileService
     from .v11_flags import ProjectPolicyService
 
     service = V1MemoryService(session_factory)
+    task_event_service = TaskEventService(session_factory)
     app = FastAPI(title="Codex Memory V1 API", version="1.0.0")
     from .admin import create_admin_router
 
@@ -114,6 +118,33 @@ def create_v1_app(session_factory: Any) -> FastAPI:
                 },
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content={"id": result.message_id, "status": result.status})
+
+    @app.post("/api/v1/task-events")
+    def append_task_event(payload: TaskEventV14Request, principal: Any = Depends(current_principal)) -> JSONResponse:
+        try:
+            result = task_event_service.append_event(
+                principal,
+                project_key=payload.project_key,
+                session_key=payload.session_key,
+                event_key=payload.event_key,
+                event_type=payload.event_type,
+                occurred_at=payload.occurred_at,
+                payload=payload.payload,
+                metadata=payload.metadata,
+                command_summary=payload.command_summary,
+                result_summary=payload.result_summary,
+                exit_code=payload.exit_code,
+                git=payload.git,
+            )
+        except TaskEventConflictError as error:
+            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"error": "event_key_conflict", "event_id": error.event_id})
+        except TaskEventValidationError as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+        except LookupError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        except (ProjectAccessDenied, PermissionDenied) as error:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+        return JSONResponse(status_code=status.HTTP_201_CREATED if result["status"] == "accepted" else status.HTTP_200_OK, content=result)
 
     @app.post("/api/v1/memory")
     def create_memory_v1(payload: MemoryV1Request, principal: Any = Depends(current_principal)) -> dict[str, Any]:

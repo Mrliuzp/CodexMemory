@@ -36,6 +36,7 @@ class V11JobHandlers:
             "memory.reindex_requested.v1",
             "parse_document",
             "chunk_document",
+            "task.event.received.v1",
         }:
             raise PermanentJobError(f"不支持的任务类型：{claim.job_type}")
 
@@ -54,6 +55,10 @@ class V11JobHandlers:
             return HandlerResult()
         if claim.job_type == "memory.reindex_requested.v1":
             return HandlerResult()
+        if claim.job_type == "task.event.received.v1":
+            from .v14_worker import TaskReportWorker
+
+            return TaskReportWorker(self.session_factory).execute(claim, context)
         raise PermanentJobError(f"不支持的任务类型：{claim.job_type}")
 
     def compensate(self, claim: JobClaim, error: Exception) -> None:

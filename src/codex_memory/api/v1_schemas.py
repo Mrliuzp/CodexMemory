@@ -25,6 +25,20 @@ class AppendV1Response(BaseModel):
     event_id: int | None = None
 
 
+class TaskEventV14Request(BaseModel):
+    project_key: str
+    session_key: str
+    event_key: str
+    event_type: Literal["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"]
+    occurred_at: datetime | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    command_summary: str | None = None
+    result_summary: str | None = None
+    exit_code: int | None = None
+    git: dict[str, Any] = Field(default_factory=dict)
+
+
 class MemoryV1Request(BaseModel):
     project_key: str
     level: Literal["L1"] = "L1"
