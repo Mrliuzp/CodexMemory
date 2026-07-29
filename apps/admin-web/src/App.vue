@@ -15,6 +15,7 @@ const nav = [
   { to: '/records', label: '只读数据', icon: Notebook },
   { to: '/imports', label: '历史知识导入', icon: Upload },
   { to: '/task-runs', label: '任务报告', icon: Document },
+  { to: '/contract-services', label: '接口契约', icon: Document },
 ]
 const title = computed(() => route.meta.label || 'Codex Memory 管理后台')
 const isLoginPage = computed(() => route.name === 'login')

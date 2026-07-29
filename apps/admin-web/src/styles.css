@@ -22,6 +22,16 @@ body { margin: 0; min-width: 960px; }
 
 .task-filter-card { margin-bottom: 18px; }
 .task-pagination { display: flex; justify-content: flex-end; margin-top: 18px; }
+.heading-actions { display: flex; gap: 10px; align-items: center; }
+.contract-filter-card, .contract-card { margin-bottom: 18px; }
+.contract-form { margin-top: 18px; }
+.contract-detail { display: grid; gap: 18px; }
+.upload-row, .publish-row { display: flex; align-items: center; gap: 12px; }
+.selected-file { flex: 1; color: #52616b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hash-input { max-width: 620px; }
+.inline-alert { margin-top: 14px; }
+.contract-list { margin: 14px 0 0; padding-left: 22px; color: #52616b; line-height: 1.7; }
+.markdown-preview { margin: 0; padding: 18px; background: #f7f9fa; color: #3f4d57; border-radius: 4px; overflow: auto; white-space: pre-wrap; word-break: break-word; line-height: 1.7; }
 .task-detail { display: grid; gap: 18px; }
 .task-card { margin: 0; }
 .task-status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
