@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -61,6 +62,39 @@ def _canonical(value: Any) -> Any:
     return value
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"JSON 常量不合法：{value}")
+
+
+def _validate_json_values(value: Any, path: str, seen: set[int]) -> None:
+    """拒绝无法稳定序列化的 YAML 专有标量和非有限浮点数。"""
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise OpenAPIContractError("OpenAPI 文档不能包含非有限数字", [_issue("invalid_number", "OpenAPI 文档不能包含非有限数字", path)])
+        return
+    if isinstance(value, dict):
+        identity = id(value)
+        if identity in seen:
+            raise OpenAPIContractError("OpenAPI 文档不能包含 YAML 别名循环", [_issue("document_cycle", "OpenAPI 文档不能包含 YAML 别名循环", path)])
+        seen.add(identity)
+        for key, item in value.items():
+            _validate_json_values(item, f"{path}/{key}" if path else f"/{key}", seen)
+        seen.remove(identity)
+        return
+    if isinstance(value, list):
+        identity = id(value)
+        if identity in seen:
+            raise OpenAPIContractError("OpenAPI 文档不能包含 YAML 别名循环", [_issue("document_cycle", "OpenAPI 文档不能包含 YAML 别名循环", path)])
+        seen.add(identity)
+        for index, item in enumerate(value):
+            _validate_json_values(item, f"{path}/{index}", seen)
+        seen.remove(identity)
+        return
+    raise OpenAPIContractError("OpenAPI 文档包含不支持的 YAML 标量", [_issue("unsupported_scalar", "OpenAPI 文档包含不支持的 YAML 标量，请使用字符串", path)])
+
+
 def _decode_document(filename: str, content: bytes) -> dict[str, Any]:
     if not isinstance(filename, str) or not filename.lower().endswith((".json", ".yaml", ".yml")):
         raise OpenAPIContractError("文件扩展名必须是 .json、.yaml 或 .yml", [_issue("invalid_extension", "文件扩展名必须是 .json、.yaml 或 .yml")])
@@ -71,11 +105,12 @@ def _decode_document(filename: str, content: bytes) -> dict[str, Any]:
     except UnicodeDecodeError as error:
         raise OpenAPIContractError("OpenAPI 文件必须是 UTF-8 编码", [_issue("invalid_encoding", "OpenAPI 文件必须是 UTF-8 编码")]) from error
     try:
-        value = json.loads(text) if filename.lower().endswith(".json") else yaml.safe_load(text)
-    except (json.JSONDecodeError, yaml.YAMLError) as error:
+        value = json.loads(text, parse_constant=_reject_json_constant) if filename.lower().endswith(".json") else yaml.safe_load(text)
+    except (json.JSONDecodeError, ValueError, yaml.YAMLError) as error:
         raise OpenAPIContractError("OpenAPI 文件格式无效", [_issue("invalid_syntax", "OpenAPI 文件格式无效")]) from error
     if not isinstance(value, dict):
         raise OpenAPIContractError("OpenAPI 文档根节点必须是对象", [_issue("invalid_root", "OpenAPI 文档根节点必须是对象")])
+    _validate_json_values(value, "", set())
     return value
 
 

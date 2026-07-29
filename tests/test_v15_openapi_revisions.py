@@ -97,6 +97,25 @@ def test_openapi_limits_and_forbidden_features() -> None:
         parse_and_normalize_openapi("contract.json", json.dumps(forbidden).encode())
 
 
+def test_yaml_date_scalar_and_json_nan_are_structured_validation_errors() -> None:
+    from codex_memory.api_operations import OpenAPIContractError, parse_and_normalize_openapi
+
+    yaml_date = """openapi: 3.1.0
+info:
+  title: 日期服务
+  version: 2026-07-29
+paths: {}
+""".encode()
+    with pytest.raises(OpenAPIContractError) as date_error:
+        parse_and_normalize_openapi("contract.yaml", yaml_date)
+    assert date_error.value.errors[0]["code"] == "unsupported_scalar"
+
+    json_nan = '{"openapi":"3.1.0","info":{"title":"NaN 服务","version":"1","x-value":NaN},"paths":{}}'.encode()
+    with pytest.raises(OpenAPIContractError) as nan_error:
+        parse_and_normalize_openapi("contract.json", json_nan)
+    assert nan_error.value.errors[0]["code"] == "invalid_syntax"
+
+
 def test_revision_service_is_idempotent_and_publishes_atomically() -> None:
     from codex_memory.contract_revisions import ContractRevisionService
     from codex_memory.persistence.v15_models import V15Base
@@ -145,6 +164,12 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     assert created.status_code == 200
     assert {"data", "meta", "request_id"} == set(created.json())
     service_id = created.json()["data"]["id"]
+    invalid_json = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("invalid.json", b'{"openapi":"3.1.0","info":{"title":"NaN","version":NaN},"paths":{}}', "application/json")}, headers=headers)
+    assert invalid_json.status_code == 422
+    assert invalid_json.json()["meta"]["validation_errors"][0]["code"] == "invalid_syntax"
+    invalid_yaml = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("invalid.yaml", "openapi: 3.1.0\ninfo:\n  title: 日期\n  version: 2026-07-29\npaths: {}\n".encode(), "application/yaml")}, headers=headers)
+    assert invalid_yaml.status_code == 422
+    assert invalid_yaml.json()["meta"]["validation_errors"][0]["code"] == "unsupported_scalar"
     body = json.dumps(_document(), ensure_ascii=False).encode()
     uploaded = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("contract.json", body, "application/json")}, headers=headers)
     assert uploaded.status_code == 200
