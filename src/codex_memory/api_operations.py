@@ -17,6 +17,8 @@ MAX_OPERATIONS = 500
 MAX_DEPTH = 64
 METHOD_ORDER = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
 METHOD_RANK = {method: index for index, method in enumerate(METHOD_ORDER)}
+SCHEMA_MAP_KEYWORDS = frozenset({"properties", "patternProperties", "dependentSchemas", "$defs", "definitions"})
+SCHEMA_LIST_KEYWORDS = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
 
 
 class OpenAPIContractError(ValueError):
@@ -241,12 +243,64 @@ def _resolve(value: Any, document: dict[str, Any], stack: tuple[str, ...] = ()) 
     return merged
 
 
-def _normalize_nullable(value: Any, *, from_openapi_30: bool = False, path: str = "") -> Any:
+def _normalize_openapi_document(value: Any, *, from_openapi_30: bool = False, path: str = "") -> Any:
+    """遍历 OpenAPI 对象，并且只在明确的 Schema 位置执行 Schema 归一化。"""
     if isinstance(value, list):
-        return [_normalize_nullable(item, from_openapi_30=from_openapi_30, path=f"{path}/{index}") for index, item in enumerate(value)]
+        return [_normalize_openapi_document(item, from_openapi_30=from_openapi_30, path=f"{path}/{index}") for index, item in enumerate(value)]
     if not isinstance(value, dict):
         return value
-    normalized = {key: _normalize_nullable(item, from_openapi_30=from_openapi_30, path=f"{path}/{key}" if path else f"/{key}") for key, item in value.items() if key != "nullable"}
+
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        child_path = f"{path}/{key}" if path else f"/{key}"
+        if key == "schema":
+            normalized[key] = _normalize_schema(item, from_openapi_30=from_openapi_30, path=child_path)
+        elif path == "/components" and key == "schemas" and isinstance(item, dict):
+            normalized[key] = {
+                name: _normalize_schema(schema, from_openapi_30=from_openapi_30, path=f"{child_path}/{name}")
+                for name, schema in item.items()
+            }
+        elif key in {"example", "default", "enum", "const", "value"} or key.startswith("x-"):
+            # 示例值和扩展内容是业务数据，不能把其中同名字段当作 Schema 关键字。
+            normalized[key] = _canonical(item)
+        else:
+            normalized[key] = _normalize_openapi_document(item, from_openapi_30=from_openapi_30, path=child_path)
+    return normalized
+
+
+def _normalize_schema(value: Any, *, from_openapi_30: bool, path: str) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        child_path = f"{path}/{key}"
+        if from_openapi_30 and key == "nullable":
+            continue
+        if key in {"example", "examples", "default", "enum", "const"} or key.startswith("x-"):
+            normalized[key] = _canonical(item)
+        elif key in SCHEMA_MAP_KEYWORDS and isinstance(item, dict):
+            normalized[key] = {
+                name: _normalize_schema(schema, from_openapi_30=from_openapi_30, path=f"{child_path}/{name}")
+                for name, schema in item.items()
+            }
+        elif key in SCHEMA_LIST_KEYWORDS and isinstance(item, list):
+            normalized[key] = [
+                _normalize_schema(schema, from_openapi_30=from_openapi_30, path=f"{child_path}/{index}")
+                for index, schema in enumerate(item)
+            ]
+        elif key in {"items", "contains", "additionalProperties", "unevaluatedProperties", "propertyNames", "not", "if", "then", "else", "contentSchema"} and isinstance(item, dict):
+            normalized[key] = _normalize_schema(item, from_openapi_30=from_openapi_30, path=child_path)
+        elif key == "dependencies" and isinstance(item, dict):
+            normalized[key] = {
+                name: _normalize_schema(dependency, from_openapi_30=from_openapi_30, path=f"{child_path}/{name}")
+                if isinstance(dependency, dict)
+                else _canonical(dependency)
+                for name, dependency in item.items()
+            }
+        else:
+            normalized[key] = _normalize_openapi_document(item, from_openapi_30=from_openapi_30, path=child_path)
+
     if from_openapi_30:
         for bound, exclusive in (("minimum", "exclusiveMinimum"), ("maximum", "exclusiveMaximum")):
             flag = value.get(exclusive)
@@ -259,7 +313,7 @@ def _normalize_nullable(value: Any, *, from_openapi_30: bool = False, path: str 
                         raise OpenAPIContractError("无法无损归一化 OpenAPI 3.0.3 排他边界", [_issue("lossy_normalization", "无法无损归一化 OpenAPI 3.0.3 排他边界", f"{path}/{exclusive}" if path else f"/{exclusive}")])
                     normalized.pop(bound, None)
                     normalized[exclusive] = number
-    if value.get("nullable") is True:
+    if from_openapi_30 and value.get("nullable") is True:
         schema = dict(normalized)
         schema_type = schema.get("type")
         if isinstance(schema_type, str):
@@ -349,7 +403,7 @@ def _operations(document: dict[str, Any]) -> list[ParsedOperation]:
     return result
 
 
-def _transition_warnings(operations: Iterable[ParsedOperation], previous: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def validate_operation_transition(operations: Iterable[Any], previous: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     old_by_route = {(str(item["method"]).upper(), str(item["path"])): str(item["operation_id"]) for item in previous}
     old_by_id = {str(item["operation_id"]): (str(item["method"]).upper(), str(item["path"])) for item in previous}
     warnings: list[dict[str, Any]] = []
@@ -454,13 +508,13 @@ def parse_and_normalize_openapi(filename: str, content: bytes, previous_operatio
     _reject_structural_features(document)
     _validate_operation_id_constraints(document)
     _validate_openapi_spec(document)
-    normalized = _normalize_nullable(document, from_openapi_30=document.get("openapi") == "3.0.3")
+    normalized = _normalize_openapi_document(document, from_openapi_30=document.get("openapi") == "3.0.3")
     if not isinstance(normalized, dict):
         raise OpenAPIContractError("OpenAPI 文档根节点必须是对象")
     normalized["openapi"] = "3.1.0"
     normalized = _canonical(normalized)
     operations = _operations(normalized)
-    warnings = _transition_warnings(operations, previous_operations)
+    warnings = validate_operation_transition(operations, previous_operations)
     serialized = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
     return NormalizedOpenAPI(document, str(document["openapi"]), normalized, "3.1.0", digest, operations, [], warnings, generate_markdown(normalized, operations))
@@ -482,4 +536,5 @@ __all__ = [
     "normalize_openapi_document",
     "parse_openapi",
     "generate_markdown",
+    "validate_operation_transition",
 ]

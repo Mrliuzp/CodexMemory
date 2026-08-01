@@ -15,7 +15,7 @@ const uploadResult = ref(null)
 
 const revisions = computed(() => service.value?.revisions || service.value?.revision_summaries || [])
 
-const statusLabels = { proposed: '待发布', published: '已发布', superseded: '已被替代' }
+const statusLabels = { empty: '暂无 Revision', proposed: '待发布', published: '已发布', superseded: '已被替代' }
 
 function displayStatus(value) {
   return statusLabels[value] || value || '未知'

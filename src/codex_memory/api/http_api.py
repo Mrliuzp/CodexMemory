@@ -62,8 +62,10 @@ def create_v1_app(session_factory: Any) -> FastAPI:
     task_event_service = TaskEventService(session_factory)
     app = FastAPI(title="Codex Memory V1 API", version="1.0.0")
     from .admin import create_admin_router
+    from .contract_api import create_contract_router
 
     app.include_router(create_admin_router(session_factory))
+    app.include_router(create_contract_router(session_factory))
     from .admin.api import AdminAPIError
 
     @app.exception_handler(AdminAPIError)

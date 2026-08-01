@@ -11,7 +11,7 @@ from .db import create_engine_from_url, create_session_factory
 from .db_models import ApiKeyRow, ProjectRow
 
 
-BOOTSTRAP_PERMISSIONS = ["append", "read", "memory_write"]
+BOOTSTRAP_PERMISSIONS = ["append", "read", "memory_write", "contract_write"]
 
 
 def ensure_bootstrap(
@@ -37,6 +37,13 @@ def ensure_bootstrap(
         if existing is not None:
             if existing.project_id != project.id:
                 raise ValueError("引导令牌已绑定到其他项目")
+            current_permissions = list(existing.permissions or [])
+            merged_permissions = current_permissions + [
+                permission for permission in BOOTSTRAP_PERMISSIONS if permission not in current_permissions
+            ]
+            if merged_permissions != current_permissions:
+                existing.permissions = merged_permissions
+                session.commit()
             return
 
         session.add(

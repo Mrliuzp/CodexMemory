@@ -47,6 +47,29 @@ def test_openapi_json_bom_and_nullable_are_normalized() -> None:
     assert len(parsed.content_hash) == 64
 
 
+def test_nullable_normalization_preserves_example_business_fields() -> None:
+    from codex_memory.api_operations import parse_and_normalize_openapi
+
+    document = _document()
+    document["components"] = {
+        "schemas": {
+            "Payload": {
+                "type": "object",
+                "properties": {"name": {"type": "string", "nullable": True}},
+                "example": {"nullable": True, "minimum": 1, "schema": {"nullable": False}},
+                "default": {"nullable": False},
+            }
+        }
+    }
+    document["x-profile"] = {"nullable": True, "exclusiveMinimum": True}
+    parsed = parse_and_normalize_openapi("contract.json", json.dumps(document).encode())
+    schema = parsed.document["components"]["schemas"]["Payload"]
+    assert schema["properties"]["name"]["type"] == ["string", "null"]
+    assert schema["example"] == {"nullable": True, "minimum": 1, "schema": {"nullable": False}}
+    assert schema["default"] == {"nullable": False}
+    assert parsed.document["x-profile"] == {"nullable": True, "exclusiveMinimum": True}
+
+
 def test_validator_path_exclusive_bounds_and_operation_hash() -> None:
     from codex_memory.api_operations import OpenAPIContractError, parse_and_normalize_openapi
 
@@ -260,7 +283,7 @@ def test_revision_service_is_idempotent_and_publishes_atomically() -> None:
 def test_revision_identity_uses_only_current_published_revision() -> None:
     from codex_memory.api_operations import OpenAPIContractError
     from codex_memory.contract_revisions import ContractRevisionService
-    from codex_memory.persistence.v15_models import ContractServiceRow, V15Base
+    from codex_memory.persistence.v15_models import ContractRevisionRow, ContractServiceRow, V15Base
 
     engine = create_engine("sqlite:///:memory:")
     V15Base.metadata.create_all(engine)
@@ -273,6 +296,8 @@ def test_revision_identity_uses_only_current_published_revision() -> None:
     second, _ = service.create_revision(created.id, "two.json", json.dumps(second_document).encode(), 1)
     assert second.revision_number == 2
     service.publish(created.id, 1, first.content_hash, 1)
+    with pytest.raises(OpenAPIContractError, match="不可变更"):
+        service.publish(created.id, 2, second.content_hash, 1)
     third_document = _document(operation_id="getPetV2")
     third_document["paths"]["/pets"]["get"]["summary"] = "变更后的查询"
     with pytest.raises(OpenAPIContractError, match="不可变更"):
@@ -280,6 +305,8 @@ def test_revision_identity_uses_only_current_published_revision() -> None:
     with factory() as session:
         service_row = session.get(ContractServiceRow, created.id)
         assert service_row.current_published_revision_id == first.id
+        assert session.get(ContractRevisionRow, first.id).status == "published"
+        assert session.get(ContractRevisionRow, second.id).status == "proposed"
 
 
 def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
@@ -328,6 +355,10 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     duplicate_service = client.post("/api/admin/v1/contract-services", json={"project_key": "erp", "service_key": "pets", "name": "宠物服务"}, headers=headers)
     assert duplicate_service.status_code == 409
     assert duplicate_service.json()["error"]["code"] == "contract_service_conflict"
+    admin_scoped_list = client.get("/api/admin/v1/contract-services?keyword=pets", headers=headers)
+    assert admin_scoped_list.status_code == 200
+    assert len(admin_scoped_list.json()["data"]) == 1
+    assert admin_scoped_list.json()["data"][0]["project_id"] == project.id
     read_headers = {"Authorization": "Bearer read-token"}
     read_list = client.get("/api/admin/v1/contract-services?keyword=pets", headers=read_headers)
     assert read_list.status_code == 200
@@ -363,10 +394,13 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     assert invalid_version.status_code == 422
     assert invalid_version.json()["error"]["code"] == "contract_unsupported_version"
     invalid_profile_document = _document()
-    invalid_profile_document["x-profile"] = {"exclusiveMinimum": True}
+    invalid_profile_document["paths"]["/pets"]["get"]["responses"]["200"] = {
+        "description": "成功",
+        "content": {"application/json": {"schema": {"type": "number", "exclusiveMinimum": True}}},
+    }
     invalid_profile = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("invalid-profile.json", json.dumps(invalid_profile_document).encode(), "application/json")}, headers=headers)
     assert invalid_profile.status_code == 422
-    assert invalid_profile.json()["error"]["code"] == "contract_profile_unsupported"
+    assert invalid_profile.json()["error"]["code"] == "contract_validation_failed"
     duplicate_document = _document()
     duplicate_document["paths"]["/other"] = {"get": {"operationId": "getPet", "responses": {"200": {"description": "成功"}}}}
     duplicate_operation = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("duplicate.json", json.dumps(duplicate_document, ensure_ascii=False).encode(), "application/json")}, headers=headers)
@@ -405,6 +439,13 @@ def test_admin_contract_api_uses_envelopes_and_project_isolation() -> None:
     published = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions/1/publish", json={"expected_content_hash": content_hash}, headers=headers)
     assert published.status_code == 200
     assert published.json()["data"]["published_by"] == "admin"
+    service_detail = client.get(f"/api/admin/v1/contract-services/{service_id}", headers=read_headers)
+    assert service_detail.status_code == 200
+    assert service_detail.json()["data"]["name"] == "宠物服务"
+    assert service_detail.json()["data"]["project_key"] == "erp"
+    assert service_detail.json()["data"]["status"] == "published"
+    assert service_detail.json()["data"]["published_revision_number"] == 1
+    assert "service" not in service_detail.json()["data"]
     changed_operation = client.post(f"/api/admin/v1/contract-services/{service_id}/revisions", files={"file": ("changed.json", json.dumps(_document(operation_id="other"), ensure_ascii=False).encode(), "application/json")}, headers=headers)
     assert changed_operation.status_code == 409
     assert changed_operation.json()["error"]["code"] == "contract_operation_id_conflict"

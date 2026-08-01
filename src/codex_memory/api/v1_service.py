@@ -52,12 +52,27 @@ class V1MemoryService:
     ) -> AppendResult:
         require_permission(principal, "append")
         require_project_access(principal, project_key)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         with self.session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
             if project is None:
                 raise LookupError(f"project does not exist: {project_key}")
-            existing = session.scalar(select(MessageRow).where(MessageRow.event_key == event_key))
+            existing = session.scalar(
+                select(MessageRow).where(MessageRow.project_id == project.id, MessageRow.event_key == event_key)
+            )
             if existing is not None:
+                if existing.content_hash != content_hash:
+                    audit = AuditLogRow(
+                        project_id=project.id,
+                        event_type="event_key_conflict",
+                        subject_type="message",
+                        subject_id=event_key,
+                        metadata_json={"existing_message_id": existing.id, "content_hash": content_hash},
+                    )
+                    session.add(audit)
+                    session.flush()
+                    session.commit()
+                    raise AppendConflictError(audit.id)
                 return AppendResult(message_id=existing.id, status="duplicate")
             conversation = session.scalar(
                 select(SessionRow).where(SessionRow.project_id == project.id, SessionRow.session_key == session_key)
@@ -73,7 +88,7 @@ class V1MemoryService:
                 role=role,
                 content=content,
                 occurred_at=occurred_at,
-                content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                content_hash=content_hash,
                 source=source,
                 metadata_json=metadata or {},
             )
@@ -91,9 +106,26 @@ class V1MemoryService:
                 session.commit()
             except IntegrityError:
                 session.rollback()
-                duplicate = session.scalar(select(MessageRow).where(MessageRow.event_key == event_key))
+                duplicate = session.scalar(
+                    select(MessageRow).where(
+                        MessageRow.project_id == project.id,
+                        MessageRow.event_key == event_key,
+                    )
+                )
                 if duplicate is None:
                     raise
+                if duplicate.content_hash != content_hash:
+                    audit = AuditLogRow(
+                        project_id=project.id,
+                        event_type="event_key_conflict",
+                        subject_type="message",
+                        subject_id=event_key,
+                        metadata_json={"existing_message_id": duplicate.id, "content_hash": content_hash},
+                    )
+                    session.add(audit)
+                    session.flush()
+                    session.commit()
+                    raise AppendConflictError(audit.id)
                 return AppendResult(message_id=duplicate.id, status="duplicate")
             return AppendResult(message_id=message.id, status="stored")
 

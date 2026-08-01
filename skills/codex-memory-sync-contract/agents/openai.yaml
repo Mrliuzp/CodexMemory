@@ -1,0 +1,15 @@
+interface:
+  display_name: "同步接口契约"
+  short_description: "整理 OpenAPI 并提交 Codex Memory 契约提案"
+  default_prompt: "使用 $codex-memory-sync-contract 整理当前项目的接口契约，并提交 proposed Revision。"
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "codex-memory"
+      description: "Codex Memory MCP 契约提案服务"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:8001/mcp"
+
+policy:
+  allow_implicit_invocation: true

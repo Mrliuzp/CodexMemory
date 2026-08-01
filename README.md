@@ -8,10 +8,12 @@ Codex 记忆系统（`codex-memory-system`）是面向 Codex 和其他智能体�
 - 本地开发模式：PostgreSQL 16 + pgvector、CLI、FastAPI、Worker 和 stdio/HTTP MCP。
 - V1.2 管理后台：Vue 3、Vite、Element Plus、Pinia 和 Vue Router。
 - V1.3.1 历史知识导入：异步批次、文件与问题生命周期、分片上传、对象存储、候选审核和回滚。
+- V1.4 可信任务执行报告：自动 TaskRun、Hook 工具事件、Git 基线、ChangeManifest、确定性报告和 L1 投影。
+- V1.5 接口契约：PHP 导出的 OpenAPI 文件、不可变 Revision、`operationId` 索引、人工发布、确定性 Markdown、管理页面和 MCP 提案工具。
 
 版本路线与 V1.5 的唯一规格见 [CodexMemory 版本路线与 V1.5 OpenAPI Revision 蓝图](docs/CODEX_MEMORY_BLUEPRINT.md)。
 
-V1.5 已完成，待合并。最终验收：后端定向 `19 passed`、前端 `9 passed` 与生产构建通过；隔离 PostgreSQL 的 `fresh→0023`、`0023→0022`、`0022→0023` 及真实 API 闭环均通过。
+V1.5 已完成并通过验收：本次收尾回归后端 `42 passed`、前端 `11 passed` 与生产构建通过；隔离 PostgreSQL 的 `fresh→0023`、`0023→0022`、`0022→0023` 及真实 API 闭环均通过。
 
 ## 一、项目现在具有什么能力
 
@@ -58,8 +60,8 @@ V1.1 的写入链路用于解决“消息丢失、重复写入和异步任务失
 ### 5. Codex 与应用接入
 
 - HTTP API：用于消息追加、记忆检索、上下文构建、反思、健康检查和管理操作。
-- MCP：提供 `append_message`、`retrieve_memory`、`build_context`、`health` 工具；生产部署通过独立 Streamable HTTP MCP 服务访问统一 API。
-- Codex Hook：`UserPromptSubmit` 记录用户消息并请求上下文，`Stop` 记录助手最终消息。
+- MCP：提供消息归档、记忆检索、上下文构建和接口契约提案工具；生产部署通过独立 Streamable HTTP MCP 服务访问统一 API。
+- Codex Hook：支持 `UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 和 `SessionEnd`，用于记录完整任务、工具证据、Git 基线与 checkpoint/final 报告。
 - CLI：支持 `init`、`status`、`doctor`、`hook install/uninstall`、`import`，以及通过正式 V1 API 执行 `append`、`retrieve`、`context`、`reflect` 和 `health`。
 - Knowledge Import Pipeline：支持 Markdown、TXT、JSON/JSONL、SQL、常见源码文件、PDF、DOCX 和 ZIP；通过异步批次上传、Outbox/Worker 解析、进度、取消、重试和审核治理，资料先进入 Reference Layer、分块和待审核候选，不直接发布为正式 Memory。
 - Python 集成：`CodexMemoryRuntime` 提供记录完整轮次和准备答案上下文的集成边界。
@@ -75,6 +77,33 @@ V1.1 的写入链路用于解决“消息丢失、重复写入和异步任务失
 - Processing Job、Outbox、检索审计和安全/领域审计事件。
 - 系统状态、数据库迁移版本、待处理任务、Outbox 和死信数量。
 - 导入批次、文件、问题、进度、候选审核、取消、重试和回滚。
+
+### 7. V1.5 接口契约交付与复盘
+
+V1.5 采用 `backend_authoritative`：PHP 项目负责导出 OpenAPI，Codex Memory 只消费标准文件，不解析 PHP Controller、Attribute 或 DTO。主要交付如下：
+
+- 数据模型：新增 `services`、`contract_revisions` 和 `api_operations`，以服务级不可变 Revision 保存完整契约，以 `operationId` 建立接口索引。
+- OpenAPI 管线：接收 OpenAPI 3.0.3/3.1 JSON 或 YAML，执行安全解析、版本/Profile 校验、3.1 归一化、稳定哈希和确定性 Markdown 生成；拒绝外部 `$ref`、callbacks、webhooks 和 links。
+- 发布治理：Revision 状态固定为 `proposed`、`published`、`superseded`；上传只创建提案，发布必须由管理员携带预期内容哈希人工确认，已发布内容不可原地修改。
+- 管理端：支持服务列表、详情、Revision 时间线、上传校验、发布确认、operation 列表和纯文本 Markdown 预览。
+- MCP 与 Skill：新增 `list_contract_services`、`get_contract_service`、`ensure_contract_service`、`propose_contract_revision`；仓库提供的 Skill `$codex-memory-sync-contract` 负责从项目证据整理契约并上传 `proposed` Revision，不能自动发布。
+- 运行修复：补齐管理端反向代理、项目键传递、Bootstrap 权限升级和模块入口执行，确保 Docker、HTTP API、MCP 与管理页面使用同一套契约和权限边界。
+
+本版本形成了以下可复用经验：
+
+- 以 OpenAPI 作为前后端中间事实，比第一版直接反向解析 PHP/TypeScript AST 更容易验证、维护和替换工具链。
+- 服务级 Revision 保存公共 Schema、鉴权和错误模型，operation 索引只承担检索与实现追踪，避免每个接口重复保存完整文档。
+- 归一化内容哈希同时解决 YAML/JSON 排版差异、重复上传和发布时并发校验；不可变 Revision 让审计和回滚有稳定依据。
+- MCP 只负责创建提案，管理端负责发布；模型生成内容和正式协作协议之间必须保留权限与人工确认边界。
+- 单元测试之外必须验证 Docker 入口、反向代理、真实 MCP 工具发现和真实 API 闭环，否则“代码可用”不等于“部署可用”。
+
+本版本暴露的主要教训：
+
+- `python -m` 包装模块如果没有显式调用 `main()`，容器命令可能以退出码 0 静默跳过 Bootstrap；入口行为必须有独立测试。
+- Windows PowerShell 管道和默认编码可能把中文写成 `?`；所有文档、界面和脚本应显式使用 UTF-8，并在提交前扫描乱码。
+- 前端只传数字项目 ID、后端按 `project_key` 授权会产生 403；跨层字段语义必须由共享契约和端到端测试固定。
+- 自动归档的事件类型不能直接充当幂等键；普通消息应生成逐消息唯一 `event_key`，只有调用方能稳定重试时才显式复用同一个键。
+- Dockerfile 过早 `COPY .` 会让任意源码变化触发依赖重装；后续应按依赖清单与源码分层复制，缩短发布验证时间。
 
 ## 二、这些能力解决了什么问题
 
@@ -216,9 +245,11 @@ http://127.0.0.1:8001/mcp
 
 MCP 适配器通过认证的 HTTP API 访问数据库，不直接绕过 API 读写数据库。
 
+接口契约工具包括 `list_contract_services`、`get_contract_service`、`ensure_contract_service` 和 `propose_contract_revision`。仓库提供的 Skill `$codex-memory-sync-contract` 可根据项目证据整理 OpenAPI 并上传 `proposed` Revision；发布仍须在管理后台人工确认。
+
 ### 5. Codex Hook
 
-仓库内的 `.codex/hooks.json` 已声明 `UserPromptSubmit` 和 `Stop` 两个 Hook。使用前需要在运行 Codex 的环境中配置：
+执行 `codex-memory hook install` 后，目标仓库的 `.codex/hooks.json` 会声明 `UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop` 和 `SessionEnd`。使用前还需要在运行 Codex 的环境中配置：
 
 ```powershell
 $env:CODEX_MEMORY_PROJECT_MAP='{"G:/Codex Project/20260703-codex-memory-system":"20260703-codex-memory-system"}'

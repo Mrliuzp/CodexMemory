@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from .api_operations import OpenAPIContractError, NormalizedOpenAPI, parse_and_normalize_openapi
+from .api_operations import OpenAPIContractError, NormalizedOpenAPI, parse_and_normalize_openapi, validate_operation_transition
 from .persistence.v15_models import ApiOperationRow, ContractRevisionRow, ContractServiceRow
 
 
@@ -71,6 +71,42 @@ class ContractRevisionService:
                 raise LookupError("服务不存在")
             session.expunge(row)
             return row
+
+    def get_service_by_key(self, project_id: int, service_key: str) -> ContractServiceRow:
+        """按项目内稳定标识读取服务。"""
+        resolved_key = service_key.strip()
+        if not resolved_key:
+            raise ValueError("服务标识不能为空")
+        with self.session_factory() as session:
+            row = session.scalar(
+                select(ContractServiceRow).where(
+                    ContractServiceRow.project_id == project_id,
+                    ContractServiceRow.service_key == resolved_key,
+                )
+            )
+            if row is None:
+                raise LookupError("服务不存在")
+            session.expunge(row)
+            return row
+
+    def ensure_service(
+        self,
+        project_id: int,
+        service_key: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> tuple[ContractServiceRow, bool]:
+        """幂等确保服务存在；已有服务的元数据不会被隐式改写。"""
+        try:
+            return self.get_service_by_key(project_id, service_key), True
+        except LookupError:
+            pass
+        try:
+            return self.create_service(project_id, service_key, name, description), False
+        except ContractRevisionConflictError as error:
+            if error.code != "service_exists":
+                raise
+            return self.get_service_by_key(project_id, service_key), True
 
     def service_detail(self, service_id: int, project_id: int | None = None) -> dict[str, Any]:
         service = self.get_service(service_id, project_id)
@@ -209,6 +245,13 @@ class ContractRevisionService:
                 if current is None:
                     current = session.scalar(select(ContractRevisionRow).where(ContractRevisionRow.service_id == service_id, ContractRevisionRow.status == "published").with_for_update())
                 if current is not None and current.id != revision.id:
+                    target_operations = session.scalars(select(ApiOperationRow).where(ApiOperationRow.revision_id == revision.id)).all()
+                    previous_operations = [
+                        {"method": row.method, "path": row.path, "operation_id": row.operation_id}
+                        for row in session.scalars(select(ApiOperationRow).where(ApiOperationRow.revision_id == current.id)).all()
+                    ]
+                    # Proposal 可能早于当前 Revision 创建，发布前必须重新验证稳定身份约束。
+                    validate_operation_transition(target_operations, previous_operations)
                     current.status = "superseded"
                 revision.status = "published"
                 revision.published_at = datetime.now(timezone.utc)

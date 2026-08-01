@@ -58,7 +58,10 @@ def test_mcp_listens_on_the_container_network() -> None:
 def test_admin_nginx_proxies_api_over_the_compose_network() -> None:
     nginx = Path("apps/admin-web/nginx.conf").read_text(encoding="utf-8")
 
-    assert "proxy_pass http://api:8000;" in nginx
+    assert "resolver 127.0.0.11 valid=10s ipv6=off;" in nginx
+    assert "set $api_upstream api:8000;" in nginx
+    assert "proxy_pass http://$api_upstream;" in nginx
+    assert "proxy_pass http://api:8000;" not in nginx
 
 
 def test_env_example_uses_placeholders_not_real_tokens() -> None:

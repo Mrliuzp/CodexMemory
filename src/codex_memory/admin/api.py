@@ -82,6 +82,22 @@ def _contract_revision_error_code(code: str) -> str:
     return "contract_revision_conflict"
 
 
+def _contract_service_payload(detail: dict[str, Any], project_key: str | None) -> dict[str, Any]:
+    service = dict(detail.get("service") or {})
+    revisions = list(detail.get("revisions") or [])
+    current_id = service.get("current_published_revision_id")
+    current = next((item for item in revisions if item.get("id") == current_id), None)
+    service.update(
+        {
+            "project_key": project_key,
+            "status": "published" if current_id is not None else ("proposed" if revisions else "empty"),
+            "published_revision_number": current.get("revision_number") if current else None,
+            "revisions": revisions,
+        }
+    )
+    return service
+
+
 def _require_v15_project_access(principal: Principal, project_key: str) -> None:
     if principal.project_key != "*" and principal.project_key != project_key:
         raise ProjectAccessDenied(f"令牌无权访问项目：{project_key}")
@@ -449,7 +465,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             row = contract_service.create_service(project.id, service_key, payload.name, payload.description)
         except ContractRevisionConflictError as error:
             raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT) from error
-        return {"data": {"id": row.id, "project_id": row.project_id, "service_key": row.service_key, "name": row.name, "description": row.description, "current_published_revision_id": row.current_published_revision_id, "created_at": _row_value(row, "created_at"), "updated_at": _row_value(row, "updated_at"), "revisions": []}, "meta": {}, "request_id": _request_id(request)}
+        return {"data": {"id": row.id, "project_id": row.project_id, "project_key": project.project_key, "service_key": row.service_key, "name": row.name, "description": row.description, "current_published_revision_id": row.current_published_revision_id, "status": "empty", "published_revision_number": None, "created_at": _row_value(row, "created_at"), "updated_at": _row_value(row, "updated_at"), "revisions": []}, "meta": {}, "request_id": _request_id(request)}
 
     @router.get("/contract-services")
     def list_contract_services(request: Request, project_key: str | None = None, status_filter: str | None = Query(default=None, alias="status"), keyword: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
@@ -459,7 +475,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         if project_key:
             project_id = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True).id
-        elif "admin" in current.permissions:
+        elif current.project_key == "*":
             project_id = None
         else:
             project_id = project_context(request, current.project_key, None, current, access_error_code="permission_denied", strict_access=True).id
@@ -468,13 +484,20 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             raise _error(request, "invalid_revision_status", "Revision 状态无效", status.HTTP_422_UNPROCESSABLE_ENTITY)
         rows = contract_service.list_services(project_id, status_filter, keyword)
         total = len(rows)
+        page_rows = rows[(page - 1) * page_size: page * page_size]
+        project_ids = {row.project_id for row in page_rows}
+        with session_factory() as session:
+            project_keys = {
+                row.id: row.project_key
+                for row in session.scalars(select(ProjectRow).where(ProjectRow.id.in_(project_ids))).all()
+            } if project_ids else {}
         items = []
-        for row in rows[(page - 1) * page_size: page * page_size]:
+        for row in page_rows:
             detail = contract_service.service_detail(row.id, row.project_id)
-            items.append({**detail["service"], "revisions": detail["revisions"]})
+            items.append(_contract_service_payload(detail, project_keys.get(row.project_id)))
         return _page(items, total, page, page_size, _request_id(request))
 
-    def _contract_service_project(request: Request, service_id: int, current: Principal, *, require_admin: bool = False) -> tuple[ContractServiceRow, int]:
+    def _contract_service_project(request: Request, service_id: int, current: Principal, *, require_admin: bool = False) -> tuple[ContractServiceRow, int, str]:
         if require_admin:
             try:
                 require_permission(current, "admin")
@@ -492,7 +515,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             except ProjectAccessDenied as error:
                 raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
             session.expunge(row)
-            return row, project.id
+            return row, project.id, project.project_key
 
     @router.get("/contract-services/{service_id}")
     def contract_service_detail(service_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
@@ -500,16 +523,16 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             require_permission(current, "read")
         except PermissionDenied as error:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
-        row, project_id = _contract_service_project(request, service_id, current)
+        row, project_id, project_key = _contract_service_project(request, service_id, current)
         try:
             detail = contract_service.service_detail(row.id, project_id)
         except LookupError as error:
             raise _error(request, "contract_service_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
-        return {"data": detail, "meta": {}, "request_id": _request_id(request)}
+        return {"data": _contract_service_payload(detail, project_key), "meta": {}, "request_id": _request_id(request)}
 
     @router.post("/contract-services/{service_id}/revisions")
     def upload_contract_revision(service_id: int, request: Request, file: UploadFile = File(...), current: Principal = Depends(principal)) -> dict[str, Any]:
-        row, project_id = _contract_service_project(request, service_id, current, require_admin=True)
+        row, project_id, _ = _contract_service_project(request, service_id, current, require_admin=True)
         filename = file.filename or ""
         try:
             content = file.file.read(MAX_DOCUMENT_BYTES + 1)
@@ -535,7 +558,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             require_permission(current, "read")
         except PermissionDenied as error:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
-        row, project_id = _contract_service_project(request, service_id, current)
+        row, project_id, _ = _contract_service_project(request, service_id, current)
         try:
             data = contract_service.get_revision(row.id, revision_number, project_id)
         except LookupError as error:
@@ -544,9 +567,12 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
 
     @router.post("/contract-services/{service_id}/revisions/{revision_number}/publish")
     def publish_contract_revision(service_id: int, revision_number: int, payload: ContractPublishRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
-        row, project_id = _contract_service_project(request, service_id, current, require_admin=True)
+        row, project_id, _ = _contract_service_project(request, service_id, current, require_admin=True)
         try:
             revision, idempotent = contract_service.publish(row.id, revision_number, payload.expected_content_hash, project_id, published_by=V15_ACTOR_PLACEHOLDER)
+        except OpenAPIContractError as error:
+            validation_code = str(error.errors[0].get("code", "invalid_openapi_document")) if error.errors else "invalid_openapi_document"
+            raise _error(request, _contract_openapi_error_code(validation_code), str(error), _contract_openapi_error_status(validation_code), meta={"validation_errors": error.errors}) from error
         except ContractRevisionConflictError as error:
             raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:

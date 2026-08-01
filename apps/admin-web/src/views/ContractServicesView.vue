@@ -1,10 +1,21 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { createContractService, extractContractServices, extractPagination, listContractServices } from '../contractServices'
+import { useSessionStore } from '../stores/session'
+import {
+  createContractService,
+  extractContractProjects,
+  extractContractServices,
+  extractPagination,
+  listContractProjects,
+  listContractServices,
+  resolveContractProjectKey,
+} from '../contractServices'
 
 const router = useRouter()
+const session = useSessionStore()
 const projectKey = ref('')
+const projects = ref([])
 const rows = ref([])
 const loading = ref(false)
 const error = ref('')
@@ -16,14 +27,16 @@ const saving = ref(false)
 const formError = ref('')
 const form = ref({ project_key: '', name: '', description: '' })
 
-const statusLabels = { active: '活跃', inactive: '未启用' }
+const statusLabels = { empty: '暂无 Revision', proposed: '待发布', published: '已发布' }
 
 function displayStatus(value) {
   return statusLabels[value] || value || '未知'
 }
 
 function statusType(value) {
-  return value === 'active' ? 'success' : 'info'
+  if (value === 'published') return 'success'
+  if (value === 'proposed') return 'warning'
+  return 'info'
 }
 
 function serviceId(row) {
@@ -90,7 +103,26 @@ function onPageChange(value) {
   load()
 }
 
-onMounted(load)
+function onProjectChange() {
+  page.value = 1
+  load()
+}
+
+async function loadProjects() {
+  try {
+    const result = await listContractProjects()
+    projects.value = extractContractProjects(result)
+    projectKey.value = resolveContractProjectKey(projects.value, session.me?.project_key)
+  } catch (cause) {
+    projects.value = []
+    error.value = cause.message
+  }
+}
+
+onMounted(async () => {
+  await loadProjects()
+  await load()
+})
 </script>
 
 <template>
@@ -101,7 +133,11 @@ onMounted(load)
 
   <el-card class="contract-filter-card">
     <el-form inline @submit.prevent="load">
-      <el-form-item label="项目键"><el-input v-model="projectKey" clearable placeholder="按项目筛选" @keyup.enter="load" /></el-form-item>
+      <el-form-item label="项目">
+        <el-select v-model="projectKey" clearable filterable placeholder="全部授权项目" style="width: 280px" @change="onProjectChange">
+          <el-option v-for="project in projects" :key="project.project_key" :label="`${project.name || project.project_key}（${project.project_key}）`" :value="project.project_key" />
+        </el-select>
+      </el-form-item>
       <el-button type="primary" :loading="loading" @click="load">查询</el-button>
     </el-form>
   </el-card>
@@ -120,7 +156,11 @@ onMounted(load)
   <el-dialog v-model="dialogVisible" title="创建接口契约服务" width="520px">
     <el-alert v-if="formError" :title="formError" type="error" show-icon />
     <el-form label-position="top" class="contract-form" @submit.prevent="saveService">
-      <el-form-item label="项目键" required><el-input v-model="form.project_key" placeholder="例如 demo" /></el-form-item>
+      <el-form-item label="项目" required>
+        <el-select v-model="form.project_key" filterable placeholder="请选择授权项目" style="width: 100%">
+          <el-option v-for="project in projects" :key="project.project_key" :label="`${project.name || project.project_key}（${project.project_key}）`" :value="project.project_key" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="服务名称" required><el-input v-model="form.name" placeholder="例如 订单服务" /></el-form-item>
       <el-form-item label="服务说明"><el-input v-model="form.description" type="textarea" :rows="3" placeholder="可选" /></el-form-item>
     </el-form>
