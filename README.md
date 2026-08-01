@@ -9,9 +9,9 @@ Codex 记忆系统（`codex-memory-system`）是面向 Codex 和其他智能体�
 - V1.2 管理后台：Vue 3、Vite、Element Plus、Pinia 和 Vue Router。
 - V1.3.1 历史知识导入：异步批次、文件与问题生命周期、分片上传、对象存储、候选审核和回滚。
 
-后续版本路线及 V1.4 可信任务执行报告的唯一规格见 [CodexMemory 版本路线与 V1.4 可信任务执行报告蓝图](docs/CODEX_MEMORY_BLUEPRINT.md)。
+版本路线与 V1.5 的唯一规格见 [CodexMemory 版本路线与 V1.5 OpenAPI Revision 蓝图](docs/CODEX_MEMORY_BLUEPRINT.md)。
 
-最新本地验收基线为 PostgreSQL 后端 `116 passed, 1 skipped`、前端 `1 passed`、Alembic 全新数据库升级到 `0021_v131_memory_scope (head)`；当前工作区改动尚未提交或推送。
+V1.5 已完成，待合并。最终验收：后端定向 `19 passed`、前端 `9 passed` 与生产构建通过；隔离 PostgreSQL 的 `fresh→0023`、`0023→0022`、`0022→0023` 及真实 API 闭环均通过。
 
 ## 一、项目现在具有什么能力
 

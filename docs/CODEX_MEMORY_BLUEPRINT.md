@@ -9,7 +9,7 @@
 | 版本 | 目标 | 状态 |
 | --- | --- | --- |
 | V1.4 | 可信任务执行报告：可审计的 Hook 事件、Git 变更清单、确定性报告和只读管理界面 | 已发布 |
-| V1.5 | OpenAPI Revision 与接口文档：服务级不可变版本、受约束 OpenAPI 归一化、手工发布和确定性 Markdown | 当前实施 |
+| V1.5 | OpenAPI Revision 与接口文档：服务级不可变版本、受约束 OpenAPI 归一化、手工发布和确定性 Markdown | 已完成，待合并 |
 | V1.6 | Vue/TS 类型、Client、Mock 与基础契约校验 | 未启动，明确不属于 V1.4 |
 | V1.7 | 生产 Embedding | 未启动，明确不属于 V1.4 |
 | V1.8 | LLM Enrichment 灰度 | 未启动，明确不属于 V1.4 |

@@ -1,4 +1,8 @@
-# codex-memory V1.1 实施状态
+# codex-memory 实施状态
+
+## V1.5 OpenAPI Revision
+
+V1.5 已完成，待合并；唯一规格见 [CodexMemory 版本路线与 V1.5 OpenAPI Revision 蓝图](docs/CODEX_MEMORY_BLUEPRINT.md)。最终验收为后端定向 `19 passed`、前端 `9 passed` 与生产构建通过，以及隔离 PostgreSQL 的三条迁移路径和真实 API 闭环通过。
 
 更新时间：2026-07-12
 
