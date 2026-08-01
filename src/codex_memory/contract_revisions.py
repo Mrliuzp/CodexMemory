@@ -131,7 +131,7 @@ class ContractRevisionService:
                             content_hash=parsed.content_hash,
                             validation_summary={"errors": parsed.errors, "warnings": parsed.warnings},
                             validation_result={"errors": parsed.errors, "warnings": parsed.warnings},
-                            markdown=parsed.markdown,
+                            markdown_document=parsed.markdown,
                             created_by=created_by or "system",
                         )
                         session.add(revision)
@@ -147,7 +147,8 @@ class ContractRevisionService:
                                     operation_id=operation.operation_id,
                                     operation_hash=operation.operation_hash,
                                     summary=operation.summary,
-                                    tags_json=operation.tags,
+                                    tags=operation.tags,
+                                    deprecated=operation.deprecated,
                                     operation_json=operation.operation,
                                 )
                             )
@@ -228,11 +229,11 @@ def _revision_summary(row: ContractRevisionRow) -> dict[str, Any]:
 
 def _revision_dict(row: ContractRevisionRow) -> dict[str, Any]:
     validation = row.validation_summary or row.validation_result or {}
-    return {"id": row.id, "project_id": row.project_id, "service_id": row.service_id, "revision_number": row.revision_number, "status": row.status, "source_filename": row.source_filename, "source_extension": row.source_extension, "source_version": row.source_version, "normalized_version": row.normalized_version, "profile_version": row.profile_version, "content_hash": row.content_hash, "validation": validation, "validation_result": validation, "validation_summary": validation, "warnings": validation.get("warnings", []), "source_document": row.source_document, "normalized_document": row.normalized_document, "document": row.normalized_document, "markdown": row.markdown, "created_by": row.created_by, "published_by": row.published_by, "created_at": _iso(row.created_at), "published_at": _iso(row.published_at)}
+    return {"id": row.id, "project_id": row.project_id, "service_id": row.service_id, "revision_number": row.revision_number, "status": row.status, "source_filename": row.source_filename, "source_extension": row.source_extension, "source_version": row.source_version, "normalized_version": row.normalized_version, "profile_version": row.profile_version, "content_hash": row.content_hash, "validation": validation, "validation_result": validation, "validation_summary": validation, "warnings": validation.get("warnings", []), "source_document": row.source_document, "normalized_document": row.normalized_document, "document": row.normalized_document, "markdown_document": row.markdown_document, "created_by": row.created_by, "published_by": row.published_by, "created_at": _iso(row.created_at), "published_at": _iso(row.published_at)}
 
 
 def _operation_dict(row: ApiOperationRow) -> dict[str, Any]:
-    return {"id": row.id, "method": row.method, "path": row.path, "operation_id": row.operation_id, "operationId": row.operation_id, "operation_hash": row.operation_hash, "summary": row.summary, "tags": row.tags_json, "operation": row.operation_json}
+    return {"id": row.id, "method": row.method, "path": row.path, "operation_id": row.operation_id, "operationId": row.operation_id, "operation_hash": row.operation_hash, "summary": row.summary, "tags": row.tags, "deprecated": row.deprecated, "operation": row.operation_json}
 
 
 def _iso(value: Any) -> str | None:

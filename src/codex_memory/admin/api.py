@@ -66,10 +66,25 @@ def _contract_openapi_error_code(code: str) -> str:
     return _CONTRACT_OPENAPI_ERROR_CODES.get(code, "contract_validation_failed")
 
 
+def _contract_openapi_error_status(code: str) -> int:
+    if code in {"invalid_extension", "invalid_encoding", "invalid_syntax", "invalid_root"}:
+        return status.HTTP_400_BAD_REQUEST
+    if code == "document_too_large":
+        return status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    if code == "operation_id_changed":
+        return status.HTTP_409_CONFLICT
+    return status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 def _contract_revision_error_code(code: str) -> str:
     if code == "service_exists":
         return "contract_service_conflict"
     return "contract_revision_conflict"
+
+
+def _require_v15_project_access(principal: Principal, project_key: str) -> None:
+    if principal.project_key != "*" and principal.project_key != project_key:
+        raise ProjectAccessDenied(f"令牌无权访问项目：{project_key}")
 
 def _redact(value: Any, *, key: str | None = None) -> Any:
     if key and (key.lower() == "raw" or SENSITIVE_KEY.search(key)):
@@ -335,11 +350,11 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         except PermissionDenied as error:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
 
-    def project_context(request: Request, project_key: str, scope_id: str | None, current: Principal) -> ProjectRow:
+    def project_context(request: Request, project_key: str, scope_id: str | None, current: Principal, *, access_error_code: str = "project_access_denied", strict_access: bool = False) -> ProjectRow:
         try:
-            require_project_access(current, project_key)
+            (_require_v15_project_access if strict_access else require_project_access)(current, project_key)
         except ProjectAccessDenied as error:
-            raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+            raise _error(request, access_error_code, str(error), status.HTTP_403_FORBIDDEN) from error
         with session_factory() as session:
             project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
             if project is None:
@@ -426,7 +441,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         project_key = (payload.project_key or (current.project_key if current.project_key != "*" else "")).strip()
         if not project_key:
             raise _error(request, "project_required", "必须指定项目键", status.HTTP_422_UNPROCESSABLE_ENTITY)
-        project = project_context(request, project_key, None, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
         service_key = (payload.service_key or payload.key or payload.service_name or payload.name or "").strip()
         if not service_key:
             raise _error(request, "service_key_required", "必须指定服务标识或名称", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -443,11 +458,11 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         except PermissionDenied as error:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         if project_key:
-            project_id = project_context(request, project_key, None, current).id
+            project_id = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True).id
         elif "admin" in current.permissions:
             project_id = None
         else:
-            project_id = project_context(request, current.project_key, None, current).id
+            project_id = project_context(request, current.project_key, None, current, access_error_code="permission_denied", strict_access=True).id
         page, page_size, _, _, _ = paging
         if status_filter is not None and status_filter not in {"proposed", "published", "superseded"}:
             raise _error(request, "invalid_revision_status", "Revision 状态无效", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -473,9 +488,9 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             if project is None:
                 raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
             try:
-                require_project_access(current, project.project_key)
+                _require_v15_project_access(current, project.project_key)
             except ProjectAccessDenied as error:
-                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+                raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
             session.expunge(row)
             return row, project.id
 
@@ -506,8 +521,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             revision, reused = contract_service.create_revision(row.id, filename, content, project_id, created_by=V15_ACTOR_PLACEHOLDER)
         except OpenAPIContractError as error:
             validation_code = str(error.errors[0].get("code", "invalid_openapi_document")) if error.errors else "invalid_openapi_document"
-            validation_status = status.HTTP_413_REQUEST_ENTITY_TOO_LARGE if validation_code == "document_too_large" else status.HTTP_422_UNPROCESSABLE_ENTITY
-            raise _error(request, _contract_openapi_error_code(validation_code), str(error), validation_status, meta={"validation_errors": error.errors}) from error
+            raise _error(request, _contract_openapi_error_code(validation_code), str(error), _contract_openapi_error_status(validation_code), meta={"validation_errors": error.errors}) from error
         except ContractRevisionConflictError as error:
             raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:

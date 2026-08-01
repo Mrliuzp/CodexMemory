@@ -34,6 +34,7 @@ class ParsedOperation:
     operation_id: str
     summary: str | None
     tags: list[str]
+    deprecated: bool
     operation: dict[str, Any]
     operation_hash: str
 
@@ -342,7 +343,7 @@ def _operations(document: dict[str, Any]) -> list[ParsedOperation]:
                 raise OpenAPIContractError("operation tags 必须是字符串数组", [_issue("invalid_tags", "operation tags 必须是字符串数组", f"/paths/{path}/{method}")])
             operation_document = _canonical(operation)
             operation_serialized = json.dumps(operation_document, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
-            result.append(ParsedOperation(method=method.upper(), path=path, operation_id=operation_id, summary=operation.get("summary") if isinstance(operation.get("summary"), str) else None, tags=sorted(set(tags)), operation=operation_document, operation_hash=hashlib.sha256(operation_serialized.encode("utf-8")).hexdigest()))
+            result.append(ParsedOperation(method=method.upper(), path=path, operation_id=operation_id, summary=operation.get("summary") if isinstance(operation.get("summary"), str) else None, tags=sorted(set(tags)), deprecated=operation.get("deprecated", False) is True, operation=operation_document, operation_hash=hashlib.sha256(operation_serialized.encode("utf-8")).hexdigest()))
             if len(result) > MAX_OPERATIONS:
                 raise OpenAPIContractError("OpenAPI operations 不能超过 500 个", [_issue("too_many_operations", "OpenAPI operations 不能超过 500 个", "/paths")])
     return result
@@ -398,7 +399,11 @@ def generate_markdown(document: dict[str, Any], operations: Iterable[ParsedOpera
         if operation.summary:
             lines.append(f"- 摘要：{operation.summary.replace(chr(10), ' ')}")
         if operation.tags:
+            if operation.deprecated:
+                lines.append("- 已弃用：是")
             lines.append(f"- 标签：{', '.join(operation.tags)}")
+        if operation.deprecated and not operation.tags:
+            lines.append("- 已弃用：是")
         request_body = operation.operation.get("requestBody")
         parameters = operation.operation.get("parameters")
         lines.extend(["", "#### 请求"])

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, JSON, BigInteger, Column, DateTime, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, JSON, BigInteger, Column, DateTime, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -61,7 +61,7 @@ class ContractRevisionRow(V15Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     validation_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     validation_result: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    markdown_document: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system", server_default="system")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -86,7 +86,8 @@ class ApiOperationRow(V15Base):
     operation_id: Mapped[str] = mapped_column(String(255), nullable=False)
     operation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     summary: Mapped[str | None] = mapped_column(String(1000))
-    tags_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     operation_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
