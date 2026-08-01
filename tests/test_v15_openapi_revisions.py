@@ -27,7 +27,7 @@ def test_v15_metadata_isolated_and_contains_expected_tables() -> None:
     assert expected.isdisjoint(V14Base.metadata.tables)
     assert "markdown_document" in V15Base.metadata.tables["contract_revisions"].c
     assert "markdown" not in V15Base.metadata.tables["contract_revisions"].c
-    assert {"tags", "deprecated"} <= set(V15Base.metadata.tables["api_operations"].c)
+    assert {"tags", "deprecated"} <= set(V15Base.metadata.tables["api_operations"].c.keys())
     assert "tags_json" not in V15Base.metadata.tables["api_operations"].c
     assert V15Base.metadata.tables["api_operations"].c.deprecated.nullable is False
 
