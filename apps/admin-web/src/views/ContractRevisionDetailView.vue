@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { extractContractRevision, getContractRevision, publishContractRevision } from '../contractServices'
+import { extractContractRevision, getContractRevision, getContractRevisionMarkdown, publishContractRevision } from '../contractServices'
 
 const route = useRoute()
 const router = useRouter()
@@ -141,7 +141,7 @@ onMounted(load)
 
     <el-card v-if="revision" class="contract-card">
       <template #header><span>Markdown 纯文本预览</span></template>
-      <pre class="markdown-preview">{{ revision.markdown || '' }}</pre>
+      <pre class="markdown-preview">{{ getContractRevisionMarkdown(revision) }}</pre>
     </el-card>
   </div>
 </template>

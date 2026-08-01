@@ -26,6 +26,10 @@ export function extractContractRevision(payload) {
   return unwrapData(payload)
 }
 
+export function getContractRevisionMarkdown(revision) {
+  return revision?.markdown_document ?? revision?.markdown ?? ''
+}
+
 export function extractPagination(payload, fallbackPage = 1, fallbackPageSize = 20) {
   const meta = payload?.meta || {}
   const pagination = meta.pagination || meta

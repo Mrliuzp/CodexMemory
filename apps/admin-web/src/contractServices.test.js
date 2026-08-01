@@ -4,6 +4,7 @@ import {
   extractContractRevision,
   extractContractServices,
   extractPagination,
+  getContractRevisionMarkdown,
   getContractRevision,
   getContractService,
   listContractServices,
@@ -21,6 +22,12 @@ describe('接口契约数据访问', () => {
     expect(extractContractServices(payload)).toEqual([{ id: 'service/1' }])
     expect(extractContractRevision({ data: { revision_number: 1 } })).toEqual({ revision_number: 1 })
     expect(extractPagination(payload)).toEqual({ page: 2, pageSize: 10, total: 21, hasNext: true })
+  })
+
+  it('优先显示新 Markdown 字段并兼容旧字段', () => {
+    expect(getContractRevisionMarkdown({ markdown_document: '# 新文档', markdown: '# 旧文档' })).toBe('# 新文档')
+    expect(getContractRevisionMarkdown({ markdown: '# 旧文档' })).toBe('# 旧文档')
+    expect(getContractRevisionMarkdown({})).toBe('')
   })
 
   it('所有服务和 Revision 路径都编码资源标识', async () => {
