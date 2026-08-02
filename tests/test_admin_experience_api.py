@@ -48,7 +48,7 @@ def admin_experience() -> tuple[TestClient, Any, dict[str, int]]:
                 ApiKeyRow(project_id=project_b.id, token_hash=hashlib.sha256(b"reader-b").hexdigest(), permissions=["read"]),
             ]
         )
-        scope_a = KnowledgeScopeRow(project_id=project_a.id, scope_key="default", name="默认作用域", is_default=True)
+        scope_a = KnowledgeScopeRow(project_id=project_a.id, scope_key="default", name="?????", is_default=True)
         scope_a_team = KnowledgeScopeRow(project_id=project_a.id, scope_key="team", name="团队作用域")
         scope_b = KnowledgeScopeRow(project_id=project_b.id, scope_key="default", name="默认作用域", is_default=True)
         session.add_all([scope_a, scope_a_team, scope_b])
@@ -267,6 +267,8 @@ def test_admin_me_dashboard_and_projects_are_project_scoped(admin_experience: tu
 
     projects = client.get("/api/admin/v1/projects", headers=_auth()).json()["data"]
     assert projects == [{"id": ids["project_a"], "project_key": "project-a", "name": "甲项目", "repository": "git/a", "status": "active", "scope_count": 2}]
+    scopes = client.get("/api/admin/v1/projects/project-a/scopes", headers=_auth()).json()["data"]
+    assert scopes[0]["name"] == "默认 Scope"
 
 
 def test_admin_resource_filters_are_explicit_and_isolated(admin_experience: tuple[TestClient, Any, dict[str, int]]) -> None:

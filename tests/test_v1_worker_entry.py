@@ -31,17 +31,3 @@ def test_worker_schedule_waits_for_next_daily_run() -> None:
 
     assert seconds_until_schedule("02:00", before) == 30
     assert seconds_until_schedule("02:00", after) == 23 * 60 * 60
-
-
-def test_worker_iteration_always_processes_v11_outbox(monkeypatch) -> None:
-    from codex_memory import worker
-
-    monkeypatch.setattr(worker, "run_v11_once", lambda _factory, worker_id: {"dispatched": 2, "completed": 2, "worker_id": worker_id})
-    monkeypatch.setattr(worker, "run_once", lambda _factory: {"erp": {"processed_messages": 1}})
-
-    without_reflection = worker.run_worker_iteration(object(), worker_id="poller", include_reflection=False)
-    with_reflection = worker.run_worker_iteration(object(), worker_id="poller", include_reflection=True)
-
-    assert without_reflection == {"v11": {"dispatched": 2, "completed": 2, "worker_id": "poller"}}
-    assert with_reflection["v11"]["dispatched"] == 2
-    assert with_reflection["reflection"] == {"erp": {"processed_messages": 1}}

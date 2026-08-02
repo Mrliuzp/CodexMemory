@@ -7,6 +7,7 @@ import PageHeader from './PageHeader.vue'
 import PermissionGate from './PermissionGate.vue'
 import { useSessionStore } from '../stores/session'
 import { renderSafeMarkdown } from '../utils/markdown'
+import { scopeDisplayName } from '../utils/format'
 
 const dialogStubs = {
   ElDialog: defineComponent({ props: ['modelValue'], setup: (props, { slots }) => () => props.modelValue ? h('section', [slots.default?.(), slots.footer?.()]) : null }),
@@ -65,5 +66,10 @@ describe('后台通用组件', () => {
     expect(html).toContain('&lt;script&gt;')
     expect(html).not.toContain('<script>')
     expect(html).toContain('rel="noopener noreferrer"')
+  })
+
+  it('Scope 名称遇到历史问号占位符时显示中文兜底', () => {
+    expect(scopeDisplayName({ scope_key: 'default', name: '?????', is_default: true })).toBe('默认 Scope')
+    expect(scopeDisplayName({ scope_key: 'team', name: '团队知识' })).toBe('团队知识')
   })
 })

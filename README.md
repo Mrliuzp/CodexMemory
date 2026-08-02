@@ -314,7 +314,7 @@ docker compose logs -f api mcp worker admin-web
 
 ### 管理后台本地开发
 
-正式管理后台只使用 `apps/admin-web/` 与 `/api/admin/v1`。先在宿主机 `8000` 端口启动正式 API，再运行 Vite；默认代理已经指向 `http://127.0.0.1:8000`，不再连接旧版 `admin/main.py` 的 `8500` 端口。
+正式管理后台只使用 `apps/admin-web/` 与 `/api/admin/v1`。先在宿主机 `8000` 端口启动正式 API，再运行 Vite；默认代理已经指向 `http://127.0.0.1:8000`。历史原型后台已经退役，不再随仓库交付。
 
 ```powershell
 Push-Location apps\admin-web

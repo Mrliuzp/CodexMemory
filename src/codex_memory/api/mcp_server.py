@@ -6,6 +6,10 @@ from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+
+from ..mcp_auth import MCP_REQUIRED_SCOPES
 
 AUTO_EVENT_TYPES = frozenset(
     {
@@ -47,9 +51,29 @@ def _resolve_append_event_key(
     session_hash = hashlib.sha256(f"{project}\0{session}".encode("utf-8")).hexdigest()[:16]
     return f"mcp:{session_hash}:{role}:{uuid4().hex}", True
 
-def create_v1_server(api_client: Any, host: str = "127.0.0.1", port: int = 8000) -> FastMCP:
-    """Create the HTTP-backed MCP surface used by deployed Codex clients."""
-    server = FastMCP("Codex Memory V1 MCP", host=host, port=port, stateless_http=True)
+def create_v1_server(
+    api_client: Any,
+    host: str = "127.0.0.1",
+    port: int = 8001,
+    token_verifier: TokenVerifier | None = None,
+) -> FastMCP:
+    """创建部署给 Codex 客户端使用的 HTTP MCP 服务。"""
+    auth = None
+    if token_verifier is not None:
+        resource_url = f"http://{host}:{port}/mcp"
+        auth = AuthSettings(
+            issuer_url=resource_url,
+            resource_server_url=resource_url,
+            required_scopes=MCP_REQUIRED_SCOPES,
+        )
+    server = FastMCP(
+        "Codex Memory V1 MCP",
+        host=host,
+        port=port,
+        stateless_http=True,
+        token_verifier=token_verifier,
+        auth=auth,
+    )
 
     @server.tool()
     def build_context(project: str, task: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:

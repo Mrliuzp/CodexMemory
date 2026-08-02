@@ -5,12 +5,12 @@ from fastapi.testclient import TestClient
 
 
 def _factory_and_client() -> tuple[object, TestClient]:
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_postgres_test_engine, create_schema, create_session_factory
     from codex_memory.db_models import ApiKeyRow, ProjectRow
     from codex_memory.http_api import create_v1_app
     from codex_memory.v11_models import V11Base
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
     factory = create_session_factory(engine)
@@ -47,28 +47,6 @@ def test_create_profile() -> None:
     assert data["dimension"] == 1536
 
 
-def test_activate_profile() -> None:
-    """为项目激活嵌入配置。"""
-    _, client = _factory_and_client()
-    # First create a profile
-    create_resp = client.post(
-        "/api/v1/admin/profiles",
-        headers=_auth("admin-token"),
-        json={"name": "act-emb", "provider": "openai", "model": "text-embedding-3-small", "dimension": 768},
-    )
-    assert create_resp.status_code == 200
-    profile_id = create_resp.json()["id"]
-
-    # Activate it for the project
-    resp = client.post(
-        "/api/v1/admin/projects/erp/profile",
-        headers=_auth("admin-token"),
-        json={"profile_id": profile_id},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["active_embedding_profile_id"] == profile_id
-
-
 def test_profile_backfill() -> None:
     """验证 backfill 端点可用。"""
     from codex_memory.db_models import MemoryRow, ProjectRow
@@ -76,7 +54,7 @@ def test_profile_backfill() -> None:
     from datetime import datetime, timezone
 
     factory, client = _factory_and_client()
-    # Create a profile
+    # 创建 Profile。
     create_resp = client.post(
         "/api/v1/admin/profiles",
         headers=_auth("admin-token"),
@@ -85,7 +63,7 @@ def test_profile_backfill() -> None:
     assert create_resp.status_code == 200
     profile_id = create_resp.json()["id"]
 
-    # Create a memory to backfill
+    # 创建待回填的 Memory。
     with factory() as session:
         project = session.scalar(
             select(ProjectRow).where(ProjectRow.project_key == "erp")

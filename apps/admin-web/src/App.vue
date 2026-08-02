@@ -8,6 +8,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useContextStore } from './stores/context'
 import { useSessionStore } from './stores/session'
+import { scopeDisplayName } from './utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -189,7 +190,7 @@ onBeforeUnmount(() => {
               <el-option v-for="project in context.projects" :key="project.project_key" :label="project.name || project.project_key" :value="project.project_key" />
             </el-select>
             <el-select :model-value="context.scopeId" :loading="context.loadingScopes" :disabled="!context.projectKey" clearable placeholder="全部 Scope" aria-label="选择 Scope" @change="changeScope">
-              <el-option v-for="scope in context.scopes" :key="scope.id || scope.scope_key" :label="scope.name || scope.scope_key" :value="String(scope.scope_key || scope.id)" />
+              <el-option v-for="scope in context.scopes" :key="scope.id || scope.scope_key" :label="scopeDisplayName(scope)" :value="String(scope.scope_key || scope.id)" />
             </el-select>
           </div>
 

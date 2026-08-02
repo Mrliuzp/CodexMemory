@@ -6,7 +6,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import inspect, text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,3 +65,34 @@ def test_v14_migration_head_to_0021_downgrade() -> None:
     command.downgrade(config, "0021_v131_memory_scope")
 
     assert _task_tables(engine) == set()
+
+
+def test_head_migration_repairs_historical_default_scope_name() -> None:
+    database_url, engine = _database_url_and_engine()
+    config = _alembic_config(database_url)
+
+    command.upgrade(config, "0023_v15_openapi_revisions")
+    with engine.begin() as connection:
+        project_id = connection.scalar(
+            text(
+                "INSERT INTO projects (project_key, name, status) "
+                "VALUES ('scope-repair', 'Scope 修复测试', 'active') RETURNING id"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO knowledge_scopes "
+                "(project_id, scope_key, name, is_default, status) "
+                "VALUES (:project_id, 'default', '?????', true, 'active')"
+            ),
+            {"project_id": project_id},
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        name = connection.scalar(
+            text("SELECT name FROM knowledge_scopes WHERE project_id = :project_id AND scope_key = 'default'"),
+            {"project_id": project_id},
+        )
+    assert name == "默认 Scope"

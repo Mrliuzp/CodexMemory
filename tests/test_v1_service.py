@@ -48,11 +48,11 @@ def test_append_rejects_another_projects_principal() -> None:
 
 def test_v11_append_rejects_same_event_key_with_different_content() -> None:
     from codex_memory.auth import Principal
-    from codex_memory.db import create_schema, create_session_factory, create_sqlite_engine
+    from codex_memory.db import create_postgres_test_engine, create_schema, create_session_factory
     from codex_memory.db_models import ProjectRow
     from codex_memory.v1_service import AppendConflictError, V1MemoryService
 
-    engine = create_sqlite_engine()
+    engine = create_postgres_test_engine()
     create_schema(engine)
     session_factory = create_session_factory(engine)
     with session_factory() as session:

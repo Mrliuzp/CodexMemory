@@ -12,6 +12,7 @@ import PageHeader from '../components/PageHeader.vue'
 import PaginationBar from '../components/PaginationBar.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useRouteQuery } from '../composables/useRouteQuery'
+import { scopeDisplayName } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -133,7 +134,7 @@ onMounted(load)
         <el-descriptions-item label="仓库"><CopyableText :value="detail.repository" /></el-descriptions-item>
         <el-descriptions-item label="Scope 数量">{{ scopes.length || detail.scope_count || 0 }}</el-descriptions-item>
       </el-descriptions>
-      <section class="drawer-section"><h4>Scope</h4><div v-if="scopes.length" class="scope-list"><div v-for="scope in scopes" :key="scope.id || scope.scope_key"><div><strong>{{ scope.name || scope.scope_key }}</strong><small>{{ scope.description || scope.scope_key }}</small></div><StatusTag :status="scope.status || (scope.is_default ? 'active' : 'inactive')" :label="scope.is_default ? '默认' : ''" /></div></div><p v-else class="muted">暂无独立 Scope。</p></section>
+      <section class="drawer-section"><h4>Scope</h4><div v-if="scopes.length" class="scope-list"><div v-for="scope in scopes" :key="scope.id || scope.scope_key"><div><strong>{{ scopeDisplayName(scope) }}</strong><small>{{ scope.description || scope.scope_key }}</small></div><StatusTag :status="scope.status || (scope.is_default ? 'active' : 'inactive')" :label="scope.is_default ? '默认' : ''" /></div></div><p v-else class="muted">暂无独立 Scope。</p></section>
       <section class="drawer-section"><h4>快捷入口</h4><div class="drawer-actions"><el-button type="primary" @click="openProject('/records')">查看记忆数据</el-button><el-button @click="openProject('/task-runs')">查看任务报告</el-button><el-button @click="openProject('/contract-services')">查看接口契约</el-button></div></section>
     </template>
   </DetailDrawer>

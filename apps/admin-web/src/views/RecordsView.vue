@@ -16,7 +16,7 @@ import StatusTag from '../components/StatusTag.vue'
 import StructuredDataViewer from '../components/StructuredDataViewer.vue'
 import { useRouteQuery } from '../composables/useRouteQuery'
 import { useContextStore } from '../stores/context'
-import { displayValue, localDateTimeToIso } from '../utils/format'
+import { displayValue, localDateTimeToIso, scopeDisplayName } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -163,7 +163,7 @@ onMounted(async () => {
 
   <FilterBar :loading="loading">
     <el-select v-model="filters.project_key" clearable filterable placeholder="全部项目" aria-label="筛选项目" @change="changeProject"><el-option v-for="project in context.projects" :key="project.project_key" :label="project.name || project.project_key" :value="project.project_key" /></el-select>
-    <el-select v-model="filters.scope_id" clearable filterable :disabled="!filters.project_key" placeholder="全部 Scope" aria-label="筛选 Scope"><el-option v-for="scope in context.scopes" :key="scope.id || scope.scope_key" :label="scope.name || scope.scope_key" :value="String(scope.scope_key || scope.id)" /></el-select>
+    <el-select v-model="filters.scope_id" clearable filterable :disabled="!filters.project_key" placeholder="全部 Scope" aria-label="筛选 Scope"><el-option v-for="scope in context.scopes" :key="scope.id || scope.scope_key" :label="scopeDisplayName(scope)" :value="String(scope.scope_key || scope.id)" /></el-select>
     <el-select v-if="['candidates', 'memories', 'jobs', 'outbox-events'].includes(filters.kind)" v-model="filters.status" clearable placeholder="全部状态" aria-label="筛选状态"><el-option label="待处理" value="pending" /><el-option label="运行中" value="running" /><el-option label="已完成" value="completed" /><el-option label="失败" value="failed" /><el-option label="死信" value="dead" /><el-option label="已批准" value="approved" /><el-option label="已拒绝" value="rejected" /></el-select>
     <el-select v-if="['candidates', 'memories'].includes(filters.kind)" v-model="filters.level" clearable placeholder="全部层级" aria-label="筛选记忆层级"><el-option v-for="level in ['L0', 'L1', 'L2', 'L3']" :key="level" :label="level" :value="level" /></el-select>
     <el-select v-if="filters.kind === 'raw-records'" v-model="filters.role" clearable placeholder="全部角色" aria-label="筛选角色"><el-option label="用户" value="user" /><el-option label="助手" value="assistant" /><el-option label="系统" value="system" /></el-select>

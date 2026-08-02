@@ -65,7 +65,7 @@ def test_concurrent_outbox_dispatch_has_no_duplicate_jobs():
     from codex_memory.db_models import OutboxEventRow, ProcessingJobRow, ProjectRow
     from codex_memory.v11_worker import OutboxDispatcher
 
-    factory, _ = _wal_factory()
+    factory, _ = _postgres_factory()
     with factory() as session:
         project = ProjectRow(project_key="erp", name="ERP")
         session.add(project)

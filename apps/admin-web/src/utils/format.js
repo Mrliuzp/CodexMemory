@@ -68,3 +68,10 @@ export function displayValue(value) {
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
+
+export function scopeDisplayName(scope) {
+  const name = String(scope?.name || '').trim()
+  if (name && !/^\?+$/.test(name)) return name
+  if (scope?.is_default || scope?.scope_key === 'default') return '默认 Scope'
+  return String(scope?.scope_key || scope?.id || '未命名 Scope')
+}

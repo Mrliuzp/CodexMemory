@@ -26,6 +26,12 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class OutboxDispatcher:
     def __init__(
         self,
@@ -366,12 +372,9 @@ class V11JobWorker:
 
     @staticmethod
     def _owns_live_job(job: ProcessingJobRow | None, worker_id: str, now: datetime) -> bool:
-        return bool(
-            job is not None
-            and job.status == "running"
-            and job.locked_by == worker_id
-            and (job.lease_expires_at is None or job.lease_expires_at > now)
-        )
+        if job is None or job.status != "running" or job.locked_by != worker_id:
+            return False
+        return job.lease_expires_at is None or _as_utc(job.lease_expires_at) > _as_utc(now)
 
     @staticmethod
     def _complete_outbox(session: Session, job: ProcessingJobRow, now: datetime) -> None:

@@ -153,6 +153,15 @@ def _row_value(row: Any, name: str, default: Any = None) -> Any:
     return value.isoformat() if isinstance(value, datetime) else value
 
 
+def _scope_display_name(scope_key: Any, name: Any, is_default: Any) -> str:
+    value = str(name or '').strip()
+    if value and not re.fullmatch(r"\?+", value):
+        return value
+    if bool(is_default) or str(scope_key) == "default":
+        return "默认 Scope"
+    return str(scope_key or "未命名 Scope")
+
+
 def _utc_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -841,7 +850,13 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             if not inspect(session.bind).has_table("knowledge_scopes"):
                 return _page([], 0, page, page_size, _request_id(request))
             rows = session.execute(text("SELECT id, scope_key, name, description, is_default, status, created_at, updated_at FROM knowledge_scopes WHERE project_id = :id ORDER BY id"), {"id": project.id}).mappings().all()
-        items = [dict(row) for row in rows]
+        items = [
+            {
+                **dict(row),
+                "name": _scope_display_name(row["scope_key"], row["name"], row["is_default"]),
+            }
+            for row in rows
+        ]
         return _page(items[(page - 1) * page_size: page * page_size], len(items), page, page_size, _request_id(request))
 
     @router.get("/scopes")

@@ -35,7 +35,7 @@ def test_v1_mcp_factory_configures_bearer_authentication() -> None:
     assert server.settings.auth.required_scopes == ["memory:read", "memory:append"]
 
 def test_v1_mcp_main_configures_static_token_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
-    from codex_memory import v1_mcp
+    from codex_memory.api import v1_mcp
 
     captured: dict[str, object] = {}
 

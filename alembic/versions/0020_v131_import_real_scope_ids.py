@@ -1,4 +1,4 @@
-"""?????? scope_id ??? knowledge_scopes ??????"""
+"""把历史导入实体的 scope_id 映射到 knowledge_scopes。"""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _ensure_default_scopes() -> None:
         return
     op.execute(sa.text("""
         INSERT INTO knowledge_scopes (project_id, scope_key, name, description, is_default, status)
-        SELECT p.id, 'default', '?????', NULL, :is_default, 'active'
+        SELECT p.id, 'default', '默认 Scope', NULL, :is_default, 'active'
         FROM projects p
         WHERE NOT EXISTS (
             SELECT 1 FROM knowledge_scopes s WHERE s.project_id = p.id AND s.scope_key = 'default'
@@ -36,7 +36,7 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     if not inspector.has_table("knowledge_scopes"):
-        # ??????? V1.2 Scope ???????????????? ID ?????
+        # 尚未建立 V1.2 Scope 表时保持原状，避免生成无法解析的关联标识。
         return
     _ensure_default_scopes()
     for table in _TABLES:
@@ -74,5 +74,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # ???? Scope ???????????????????????????????????
+    # 真实 Scope 标识不可无损还原为早期字符串字段，因此不执行破坏性降级。
     return

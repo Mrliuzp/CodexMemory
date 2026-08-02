@@ -36,7 +36,7 @@ def main() -> None:
     knowledge_import.add_argument("--project", required=True)
     knowledge_import.add_argument("paths", nargs="+", help="Markdown/TXT/JSONL/SQL/源码文件路径。")
 
-    append = subparsers.add_parser("append", help="Append one raw L0 conversation message.")
+    append = subparsers.add_parser("append", help="追加一条 L0 原始对话消息。")
     append.add_argument("--project", required=True)
     append.add_argument("--conversation", required=True)
     append.add_argument("--role", required=True)
@@ -46,7 +46,7 @@ def main() -> None:
     append.add_argument("--async-process", action="store_true")
     append.add_argument("--enqueue-worker", action="store_true")
 
-    retrieve = subparsers.add_parser("retrieve", help="Retrieve layered memory for a project.")
+    retrieve = subparsers.add_parser("retrieve", help="检索项目的分层记忆。")
     retrieve.add_argument("--project", required=True)
     retrieve.add_argument("--query", required=True)
     retrieve.add_argument("--tag", action="append", default=[])
@@ -56,7 +56,7 @@ def main() -> None:
     retrieve.add_argument("--type", action="append", dest="memory_type", default=[])
     retrieve.add_argument("--limit", type=int, default=8)
 
-    context = subparsers.add_parser("context", help="Build prompt injection context.")
+    context = subparsers.add_parser("context", help="构建提示词注入上下文。")
     context.add_argument("--project", required=True)
     context.add_argument("--task", required=True)
     context.add_argument("--tag", action="append", default=[])
@@ -67,58 +67,18 @@ def main() -> None:
     context.add_argument("--limit", type=int, default=8)
     context.add_argument("--skip-pending", action="store_true")
 
-    reflect = subparsers.add_parser("reflect", help="Run offline knowledge reflection for a project.")
+    reflect = subparsers.add_parser("reflect", help="为项目执行离线知识反思。")
     reflect.add_argument("--project", required=True)
 
-    reflect_job = subparsers.add_parser("reflect-job", help="Run a schedulable reflection job.")
-    reflect_job.add_argument("--project", action="append", required=True)
-    reflect_job.add_argument("--interval", type=int, default=3600)
-    reflect_job.add_argument("--iterations", type=int, default=1)
-    reflect_job.add_argument("--forever", action="store_true")
-
-    process_job = subparsers.add_parser("process-job", help="Run a schedulable L0 processing job.")
-    process_job.add_argument("--interval", type=int, default=10)
-    process_job.add_argument("--iterations", type=int, default=1)
-    process_job.add_argument("--forever", action="store_true")
-
-    serve = subparsers.add_parser("serve", help="Start the HTTP API server.")
+    serve = subparsers.add_parser("serve", help="启动 HTTP API 服务。")
     serve.add_argument("--host", default=os.environ.get("CODEX_MEMORY_HTTP_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(os.environ.get("CODEX_MEMORY_HTTP_PORT", "8000")))
     serve.add_argument("--reload", action="store_true")
 
-    mcp = subparsers.add_parser("mcp", help="Start the MCP server.")
+    mcp = subparsers.add_parser("mcp", help="启动 MCP 服务。")
     mcp.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
 
-    reports = subparsers.add_parser("reports", help="List reflection reports for a project.")
-    reports.add_argument("--project", required=True)
-
-    raw_logs = subparsers.add_parser("raw-logs", help="List raw logs for a project.")
-    raw_logs.add_argument("--project", required=True)
-
-    jobs = subparsers.add_parser("jobs", help="List processing jobs for a project.")
-    jobs.add_argument("--project", required=True)
-
-    promote = subparsers.add_parser("promote-global", help="Promote a project L2 memory to global L2.")
-    promote.add_argument("--project", required=True)
-    promote.add_argument("--memory-id", type=int, required=True)
-    promote.add_argument("--reviewer", required=True)
-    promote.add_argument("--reason", required=True)
-
-    export = subparsers.add_parser("export", help="Export project audit data.")
-    export.add_argument("--project", required=True)
-
-    rebuild = subparsers.add_parser("rebuild", help="Rebuild project derived memories from L0.")
-    rebuild.add_argument("--project", required=True)
-
-    retry_failed = subparsers.add_parser("retry-failed", help="重试失败的 L0 处理任务。")
-    retry_failed.add_argument("--project", required=True)
-
-    reset_stale = subparsers.add_parser("reset-stale-running", help="Reset stale running L0 jobs.")
-    reset_stale.add_argument("--project", required=True)
-    reset_stale.add_argument("--older-than-minutes", type=int, default=30)
-
-    subparsers.add_parser("health", help="Check database health.")
-    subparsers.add_parser("process", help="Process all pending L0 jobs.")
+    subparsers.add_parser("health", help="检查 API 与数据库健康状态。")
 
     args = parser.parse_args()
 
@@ -235,7 +195,7 @@ def main() -> None:
     elif args.command == "health":
         result = client.get("/api/v1/health")
     else:
-        raise SystemExit(f"命令 {args.command} 属于已删除的旧本地运行时，请使用正式 API 或管理后台")
+        raise SystemExit(f"命令 {args.command} 尚未实现")
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -249,7 +209,7 @@ def parse_json_object(value: str) -> dict:
     except json.JSONDecodeError as error:
         raise argparse.ArgumentTypeError(f"JSON 对象无效：{error.msg}") from error
     if not isinstance(parsed, dict):
-        raise argparse.ArgumentTypeError("metadata JSON 必须是对象（must be an object）")
+        raise argparse.ArgumentTypeError("metadata JSON 必须是对象")
     return parsed
 
 
