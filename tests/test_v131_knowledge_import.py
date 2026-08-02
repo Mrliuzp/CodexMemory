@@ -135,7 +135,7 @@ def test_import_entities_bind_to_real_knowledge_scope_id(tmp_path: Path) -> None
     with factory() as session:
         session.add(ProjectRow(project_key="demo", name="Demo"))
         session.commit()
-    result = KnowledgeImportService(factory).import_items("demo", [ImportItem("scope.txt", "???????", "text")])
+    result = KnowledgeImportService(factory).import_items("demo", [ImportItem("scope.txt", "默认范围内容", "text")])
     with factory() as session:
         scope_id = session.execute(__import__("sqlalchemy").text("SELECT id FROM knowledge_scopes WHERE project_id = 1 AND is_default = true")).scalar_one()
         batch = session.get(ImportBatchRow, result.batch_id)

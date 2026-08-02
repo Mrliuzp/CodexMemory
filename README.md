@@ -196,7 +196,7 @@ python -m codex_memory.cli import --project demo .\docs\guide.md .\schema.sql
 
 导入内容按 ImportBatch、ImportFile、ImportIssue、Processing Job 和候选记忆生命周期保存，并保留来源、版本与 Scope；正式 Memory 仍需审核和既有治理流程。
 
-Docker 部署后默认访问 <http://127.0.0.1:5174/imports> 使用管理端导入历史资料。页面支持创建批次、上传资料、启动异步解析、查看进度和候选、批准发布、拒绝、取消、重试和批次软回滚；导入内容不会绕过审核直接写入正式 Memory。支持 Markdown、TXT、JSON/JSONL、SQL、源码、PDF、DOCX 和 ZIP；大文件可跨请求分片上传，原文可使用数据库或文件系统对象存储；疑似 Prompt Injection 内容会被隔离，常见凭据会在候选层脱敏。本机 Admin Web 因端口占用使用 `5175`，MCP 已恢复正式端口 `8001`。
+Docker 部署后默认访问 <http://127.0.0.1:5174/imports> 使用管理端导入历史资料。页面支持创建批次、上传资料、启动异步解析、查看进度和候选、批准发布、拒绝、取消、重试和批次软回滚；导入内容不会绕过审核直接写入正式 Memory。支持 Markdown、TXT、JSON/JSONL、SQL、源码、PDF、DOCX 和 ZIP；大文件可跨请求分片上传，原文可使用数据库或文件系统对象存储；疑似 Prompt Injection 内容会被隔离，常见凭据会在候选层脱敏。正式 Admin Web 端口为 `5174`，正式 MCP 端口为 `8001`。
 
 文件系统对象存储需要让 API 和 Worker 使用相同路径；Compose 通过共享 `importdata` 卷满足这一要求：
 
@@ -311,6 +311,19 @@ API 容器启动时会执行 `alembic upgrade head`，然后幂等执行 bootstr
 ```powershell
 docker compose logs -f api mcp worker admin-web
 ```
+
+### 管理后台本地开发
+
+正式管理后台只使用 `apps/admin-web/` 与 `/api/admin/v1`。先在宿主机 `8000` 端口启动正式 API，再运行 Vite；默认代理已经指向 `http://127.0.0.1:8000`，不再连接旧版 `admin/main.py` 的 `8500` 端口。
+
+```powershell
+Push-Location apps\admin-web
+npm ci
+npm run dev
+Pop-Location
+```
+
+如需连接其他正式 API 实例，可通过 `VITE_ADMIN_API_PROXY_TARGET` 覆盖代理目标。生产部署仍由 Nginx 将 `/api/` 转发至 Compose 内部的 `api:8000`。
 
 ### 生产部署必须补齐的工作
 

@@ -1,7 +1,7 @@
-"""???????????
+"""历史数据导入内容的持久化适配层。
 
-?????????????????????????????????????
-S3/MinIO ?????????Worker ?????????????
+默认将内容保存在数据库中，也支持把载荷写入本地文件系统。
+未来接入 S3/MinIO 时，只需实现相同协议，Worker 无需感知存储差异。
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ class ImportStorage(Protocol):
     backend: str
 
     def put(self, content: str, batch_id: int, content_hash: str) -> StoredImport:
-        """???????????????"""
+        """保存导入内容并返回存储引用。"""
 
     def get(self, stored: StoredImport) -> str:
-        """????????????"""
+        """读取存储引用对应的导入内容。"""
 
 
 class DatabaseImportStorage:
@@ -38,12 +38,12 @@ class DatabaseImportStorage:
 
     def get(self, stored: StoredImport) -> str:
         if stored.content is None:
-            raise ValueError("???????????")
+            raise ValueError("数据库存储记录缺少导入内容")
         return stored.content
 
 
 class FilesystemImportStorage:
-    """???????????????????????????"""
+    """将导入载荷原子写入受控目录的文件系统存储。"""
 
     backend = "filesystem"
 
@@ -54,10 +54,10 @@ class FilesystemImportStorage:
     def _path(self, key: str) -> Path:
         prefix = "fs://import-files/"
         if not key.startswith(prefix):
-            raise ValueError("????????")
+            raise ValueError("无效的导入存储键")
         relative = Path(key[len(prefix):])
         if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("????????")
+            raise ValueError("导入存储路径不安全")
         return self.root / relative
 
     def put(self, content: str, batch_id: int, content_hash: str) -> StoredImport:
@@ -91,4 +91,4 @@ def build_import_storage() -> ImportStorage:
         return FilesystemImportStorage(root)
     if backend in {"database", "db"}:
         return DatabaseImportStorage()
-    raise ValueError(f"???????????{backend}")
+    raise ValueError(f"不支持的导入存储后端：{backend}")

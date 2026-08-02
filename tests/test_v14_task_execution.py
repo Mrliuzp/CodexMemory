@@ -155,7 +155,22 @@ def test_admin_task_run_response_envelopes_and_project_filter() -> None:
     listing = client.get("/api/admin/v1/task-runs?project_key=erp", headers=headers)
     assert listing.status_code == 200
     assert {"data", "meta", "request_id"} == set(listing.json())
-    assert {"id", "project_id", "session_key", "status", "started_at", "ended_at", "current_report_revision"} == set(listing.json()["data"][0])
+    assert {
+        "id",
+        "project_id",
+        "project_key",
+        "session_key",
+        "prompt_excerpt",
+        "prompt_truncated",
+        "status",
+        "started_at",
+        "ended_at",
+        "current_report_revision",
+        "uncertain",
+    } == set(listing.json()["data"][0])
+    assert listing.json()["data"][0]["project_key"] == "erp"
+    assert listing.json()["data"][0]["prompt_excerpt"] is None
+    assert listing.json()["data"][0]["prompt_truncated"] is False
     run_id = listing.json()["data"][0]["id"]
     detail = client.get(f"/api/admin/v1/task-runs/{run_id}", headers=headers)
     assert detail.status_code == 200

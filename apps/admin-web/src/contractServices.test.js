@@ -1,18 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { adminGet, adminPost, adminUpload } from './api'
 import {
+  buildContractServiceListParams,
+  canPublishContractRevision,
   extractContractRevision,
   extractContractProjects,
   extractContractService,
   extractContractServices,
   extractPagination,
   getContractRevisionMarkdown,
+  getContractValidation,
   getContractRevision,
   getContractService,
   listContractServices,
   listContractProjects,
   publishContractRevision,
   resolveContractProjectKey,
+  isStableServiceKey,
   uploadContractRevision,
 } from './contractServices'
 
@@ -81,5 +85,30 @@ describe('接口契约数据访问', () => {
     expect(adminGet).toHaveBeenNthCalledWith(4, '/contract-services/service%2F1/revisions/2')
     expect(adminUpload).toHaveBeenCalledWith('/contract-services/service%2F1/revisions', expect.any(Blob))
     expect(adminPost).toHaveBeenCalledWith('/contract-services/service%2F1/revisions/2/publish', { expected_content_hash: 'abc123' })
+  })
+
+  it('构建项目、状态与关键词筛选并忽略空值', () => {
+    expect(buildContractServiceListParams({ projectKey: 'erp', status: 'proposed', keyword: 'pets', page: 2, pageSize: 50 })).toEqual({
+      project_key: 'erp',
+      status: 'proposed',
+      keyword: 'pets',
+      page: 2,
+      page_size: 50,
+    })
+    expect(buildContractServiceListParams({ page: 1, pageSize: 20 })).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('只允许校验通过且状态为 proposed 的 Revision 发布', () => {
+    const valid = { status: 'proposed', content_hash: 'abc', validation: { errors: [], warnings: ['复核说明'] } }
+    expect(getContractValidation(valid)).toEqual({ errors: [], warnings: ['复核说明'] })
+    expect(canPublishContractRevision(valid)).toBe(true)
+    expect(canPublishContractRevision({ ...valid, status: 'published' })).toBe(false)
+    expect(canPublishContractRevision({ ...valid, validation: { errors: ['缺少 operationId'] } })).toBe(false)
+  })
+
+  it('校验稳定 service_key 的格式', () => {
+    expect(isStableServiceKey('order-api.v1')).toBe(true)
+    expect(isStableServiceKey('订单服务')).toBe(false)
+    expect(isStableServiceKey('A')).toBe(false)
   })
 })

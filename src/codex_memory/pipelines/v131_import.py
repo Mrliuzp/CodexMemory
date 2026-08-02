@@ -110,9 +110,9 @@ def _hash(value: str) -> str:
 
 
 def _resolve_scope_id(session: Session, project_id: int, scope_key: str) -> int:
-    """???????? knowledge_scopes ??????"""
+    """解析 knowledge_scopes 中的 Scope 标识。"""
     if not inspect(session.bind).has_table("knowledge_scopes"):
-        # ????? V1.2 ???????/????????????? Scope ??
+        # 兼容尚未执行 V1.2 迁移的数据库：暂时将项目标识作为 Scope 标识。
         return project_id
     row = session.execute(
         text("SELECT id FROM knowledge_scopes WHERE project_id = :project_id AND (scope_key = :scope_key OR CAST(id AS TEXT) = :scope_key OR (:scope_key IN ('project', 'default') AND is_default = :is_default))"),
@@ -121,7 +121,7 @@ def _resolve_scope_id(session: Session, project_id: int, scope_key: str) -> int:
     if row is None and scope_key in {"project", "default"}:
         session.execute(
             text("INSERT INTO knowledge_scopes (project_id, scope_key, name, description, is_default, status) VALUES (:project_id, 'default', :name, NULL, :is_default, 'active')"),
-            {"project_id": project_id, "name": "?????", "is_default": True},
+            {"project_id": project_id, "name": "默认 Scope", "is_default": True},
         )
         row = session.execute(
             text("SELECT id FROM knowledge_scopes WHERE project_id = :project_id AND scope_key = 'default'"),
@@ -492,78 +492,78 @@ class KnowledgeImportService:
             return {"batch_id": batch_id, "added": added, "source_count": batch.source_count}
 
     def begin_upload(self, batch_id: int, source_name: str, source_type: str | None, total_parts: int, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-        """????????????????????? ImportFile?"""
+        """校验分片上传参数并返回客户端上传会话信息。"""
         if not source_name.strip() or total_parts < 1 or total_parts > 1024:
-            raise ValueError("????????")
+            raise ValueError("文件名不能为空，分片数量必须在 1 到 1024 之间")
         with self.session_factory() as session:
             batch = session.get(ImportBatchRow, batch_id)
             if batch is None:
-                raise LookupError(f"????????{batch_id}")
+                raise LookupError(f"导入批次不存在：{batch_id}")
             if batch.status not in {"draft", "uploaded", "failed", "cancelled"}:
-                raise ValueError("???????????")
+                raise ValueError("当前批次状态不允许上传文件")
             source_kind = (source_type or source_type_for_name(source_name)).lower()
             if source_kind not in SUPPORTED_TYPES:
-                raise ValueError(f"?????????{source_kind}")
+                raise ValueError(f"不支持的文件类型：{source_kind}")
             upload_id = uuid.uuid4().hex
             session.commit()
             return {"batch_id": batch_id, "upload_id": upload_id, "source_name": source_name, "source_type": source_kind, "total_parts": total_parts, "metadata": metadata or {}}
 
     def put_upload_part(self, batch_id: int, upload_id: str, part_number: int, total_parts: int, source_name: str, source_type: str | None, content: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-        """????????????? UTF-8 ? base64 ??????"""
+        """写入一个分片，内容可使用 UTF-8 文本或 base64 编码。"""
         if part_number < 0 or total_parts < 1 or part_number >= total_parts:
-            raise ValueError("??????")
+            raise ValueError("分片序号超出有效范围")
         size = len(_content_bytes(content))
         if size > 4 * 1024 * 1024:
-            raise ValueError("???????? 4 MiB")
+            raise ValueError("单个分片不能超过 4 MiB")
         with self.session_factory() as session:
             batch = session.get(ImportBatchRow, batch_id)
             if batch is None:
-                raise LookupError(f"????????{batch_id}")
+                raise LookupError(f"导入批次不存在：{batch_id}")
             if batch.status not in {"draft", "uploaded", "failed", "cancelled"}:
-                raise ValueError("???????????")
+                raise ValueError("当前批次状态不允许上传文件")
             project = session.get(ProjectRow, batch.project_id)
             if project is None:
-                raise LookupError("?????")
+                raise LookupError("批次所属项目不存在")
             source_kind = (source_type or source_type_for_name(source_name)).lower()
             if source_kind not in SUPPORTED_TYPES:
-                raise ValueError(f"?????????{source_kind}")
+                raise ValueError(f"不支持的文件类型：{source_kind}")
             existing = session.scalar(select(ImportUploadPartRow).where(ImportUploadPartRow.import_batch_id == batch_id, ImportUploadPartRow.upload_id == upload_id, ImportUploadPartRow.part_number == part_number))
             content_hash = _hash(content)
             if existing is not None:
                 if existing.content_hash != content_hash or existing.total_parts != total_parts:
-                    raise ValueError("?????????????")
+                    raise ValueError("同一分片已存在，但内容或分片总数不一致")
                 return {"upload_id": upload_id, "part_number": part_number, "status": existing.status, "size_bytes": existing.size_bytes}
             session.add(ImportUploadPartRow(project_id=project.id, scope_id=batch.scope_id, import_batch_id=batch.id, upload_id=upload_id, source_name=source_name, source_type=source_kind, part_number=part_number, total_parts=total_parts, size_bytes=size, content_hash=content_hash, content=content, metadata_json=metadata or {}, status="uploaded"))
             session.commit()
             return {"upload_id": upload_id, "part_number": part_number, "status": "uploaded", "size_bytes": size}
 
     def complete_upload(self, batch_id: int, upload_id: str) -> dict[str, Any]:
-        """??????????????? ImportFile?"""
+        """合并已上传的分片并生成导入文件记录。"""
         with self.session_factory() as session:
             batch = session.get(ImportBatchRow, batch_id)
             if batch is None:
-                raise LookupError(f"????????{batch_id}")
+                raise LookupError(f"导入批次不存在：{batch_id}")
             parts = session.scalars(select(ImportUploadPartRow).where(ImportUploadPartRow.import_batch_id == batch_id, ImportUploadPartRow.upload_id == upload_id).order_by(ImportUploadPartRow.part_number)).all()
             if not parts:
-                raise LookupError("?????????")
+                raise LookupError("未找到上传分片")
             total_parts = parts[0].total_parts
             if len(parts) != total_parts or [part.part_number for part in parts] != list(range(total_parts)):
-                raise ValueError("????????")
+                raise ValueError("上传分片不完整或序号不连续")
             if any(part.total_parts != total_parts or part.status == "completed" for part in parts):
                 if all(part.status == "completed" for part in parts):
                     return {"batch_id": batch_id, "upload_id": upload_id, "status": "completed", "added": 0}
-                raise ValueError("???????")
+                raise ValueError("分片上传状态不一致")
             source_name = parts[0].source_name
             source_type = parts[0].source_type
             if any(part.source_name != source_name or part.source_type != source_type for part in parts):
-                raise ValueError("??????????")
+                raise ValueError("分片的文件名或文件类型不一致")
             if sum(int(part.size_bytes or 0) for part in parts) > 64 * 1024 * 1024:
-                raise ValueError("?????????? 64 MiB")
+                raise ValueError("合并后的文件不能超过 64 MiB")
             values = [part.content for part in parts]
             if all(value.startswith("base64:") for value in values):
                 combined = "base64:" + base64.b64encode(b"".join(_content_bytes(value) for value in values)).decode("ascii")
             elif any(value.startswith("base64:") for value in values):
-                raise ValueError("????????????")
+                raise ValueError("同一次上传不能混用文本与 base64 分片")
             else:
                 combined = "".join(values)
             metadata = parts[0].metadata_json or {}

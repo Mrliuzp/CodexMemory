@@ -207,14 +207,14 @@ def test_filesystem_import_storage_keeps_database_row_without_raw_content(tmp_pa
         project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == "demo"))
         assert project is not None
     batch_id = KnowledgeImportService(factory).create_batch("demo")
-    KnowledgeImportService(factory).add_files(batch_id, [ImportItem("guide.txt", "?????????", "text")])
+    KnowledgeImportService(factory).add_files(batch_id, [ImportItem("guide.txt", "需要导入的指南内容", "text")])
     with factory() as session:
         row = session.scalar(select(ImportFileRow).where(ImportFileRow.import_batch_id == batch_id))
         assert row is not None
         assert row.storage_backend == "filesystem"
         assert row.content is None
         object_path = tmp_path / "objects" / str(batch_id) / f"{row.content_hash}.payload"
-        assert object_path.read_text(encoding="utf-8") == "?????????"
+        assert object_path.read_text(encoding="utf-8") == "需要导入的指南内容"
 
 
 def test_chunked_upload_is_resumable_and_assembles_one_file() -> None:

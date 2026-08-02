@@ -31,7 +31,11 @@ def test_admin_login_returns_session_token_and_me(monkeypatch) -> None:
     assert token.startswith("cm1.")
     me = client.get("/api/admin/v1/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
-    assert me.json()["data"]["permissions"] == ["admin", "read"]
+    identity = me.json()["data"]
+    assert identity["permissions"] == ["admin", "read"]
+    assert identity["display_name"] == "memory-admin"
+    assert identity["auth_type"] == "session"
+    assert identity["expires_at"].endswith("+00:00")
 
 
 def test_admin_login_rejects_invalid_credentials(monkeypatch) -> None:

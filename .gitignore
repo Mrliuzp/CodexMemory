@@ -18,4 +18,9 @@ Thumbs.db
 .env
 # Frontend dependencies and build output.
 apps/admin-web/node_modules/
-apps/admin-web/dist/
+apps/admin-web/dist/*
+!apps/admin-web/dist/index.html
+!apps/admin-web/dist/assets/
+apps/admin-web/dist/assets/*
+!apps/admin-web/dist/assets/*.js
+!apps/admin-web/dist/assets/*.css

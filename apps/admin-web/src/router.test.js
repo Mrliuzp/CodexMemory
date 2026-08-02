@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import router from './router'
 
-describe('admin navigation', () => {
-  it('keeps the P0 read-only entry points addressable', () => {
+describe('管理后台导航', () => {
+  it('保留正式后台的核心入口', () => {
     const paths = router.getRoutes().map((route) => route.path)
     expect(paths).toEqual(expect.arrayContaining(['/dashboard', '/projects', '/records', '/task-runs', '/task-runs/:id']))
+  })
+
+  it('使用懒加载页面并提供权限状态页', () => {
+    const dashboard = router.getRoutes().find((route) => route.name === 'dashboard')
+    const paths = router.getRoutes().map((route) => route.path)
+    expect(typeof dashboard.components.default).toBe('function')
+    expect(paths).toEqual(expect.arrayContaining(['/system-status', '/forbidden', '/:pathMatch(.*)*']))
   })
 
   it('使用中文只读任务报告路由', () => {

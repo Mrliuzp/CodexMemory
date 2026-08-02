@@ -263,7 +263,7 @@ class ImportFileRow(V11TimestampedRow, V11Base):
 
 
 class ImportUploadPartRow(V11TimestampedRow, V11Base):
-    """?????????????????"""
+    """历史导入文件的临时上传分片。"""
 
     __tablename__ = "import_upload_parts"
     __table_args__ = (

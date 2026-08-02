@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import secrets
@@ -11,7 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from pydantic import BaseModel, Field
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import String, cast, false, func, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -22,9 +23,21 @@ from ..persistence.v14_models import TaskEventRow, TaskFileChangeRow, TaskReport
 from ..contract_revisions import ContractRevisionConflictError, ContractRevisionService
 from ..api_operations import OpenAPIContractError
 from ..api_operations import MAX_DOCUMENT_BYTES
+from ..config import is_placeholder_value
 from ..persistence.v15_models import ContractRevisionRow, ContractServiceRow
 
-SORT_FIELDS = {"created_at", "updated_at", "id", "status", "project_key", "title"}
+SORT_FIELDS = {
+    "created_at",
+    "updated_at",
+    "started_at",
+    "ended_at",
+    "current_report_revision",
+    "session_key",
+    "id",
+    "status",
+    "project_key",
+    "title",
+}
 SENSITIVE_KEY = re.compile(r"(?:api[_-]?key|authorization|bearer|password|secret|token|credential)", re.I)
 # V1.5 当前没有稳定的用户身份字段，先以固定占位身份记录审计字段；后续接入身份系统时替换。
 V15_ACTOR_PLACEHOLDER = "admin"
@@ -82,9 +95,18 @@ def _contract_revision_error_code(code: str) -> str:
     return "contract_revision_conflict"
 
 
-def _contract_service_payload(detail: dict[str, Any], project_key: str | None) -> dict[str, Any]:
+def _contract_service_payload(
+    detail: dict[str, Any],
+    project_key: str | None,
+    revision_sizes: dict[int, int] | None = None,
+) -> dict[str, Any]:
     service = dict(detail.get("service") or {})
-    revisions = list(detail.get("revisions") or [])
+    revisions = []
+    for value in detail.get("revisions") or []:
+        revision = dict(value)
+        if revision_sizes is not None and revision.get("id") in revision_sizes:
+            revision["size_bytes"] = revision_sizes[revision["id"]]
+        revisions.append(revision)
     current_id = service.get("current_published_revision_id")
     current = next((item for item in revisions if item.get("id") == current_id), None)
     service.update(
@@ -96,6 +118,21 @@ def _contract_service_payload(detail: dict[str, Any], project_key: str | None) -
         }
     )
     return service
+
+
+def _contract_document_size(document: Any) -> int:
+    if isinstance(document, bytes):
+        return len(document)
+    if isinstance(document, str):
+        return len(document.encode("utf-8"))
+    return len(json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+def _contract_revision_payload(data: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(data)
+    if payload.get("size_bytes") is None and payload.get("source_document") is not None:
+        payload["size_bytes"] = _contract_document_size(payload["source_document"])
+    return payload
 
 
 def _require_v15_project_access(principal: Principal, project_key: str) -> None:
@@ -114,6 +151,42 @@ def _redact(value: Any, *, key: str | None = None) -> Any:
 def _row_value(row: Any, name: str, default: Any = None) -> Any:
     value = getattr(row, name, default)
     return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _literal_like_pattern(value: str) -> str:
+    escaped = value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _task_prompt(event: TaskEventRow | None) -> tuple[str | None, bool]:
+    if event is None:
+        return None, False
+    stored = event.payload_json if isinstance(event.payload_json, dict) else {}
+    sources = [stored.get("payload"), stored.get("metadata"), event.metadata_json]
+    prompt: str | None = None
+    source_truncated = False
+    for source in sources:
+        if not isinstance(source, dict) or "prompt" not in source:
+            continue
+        value = source.get("prompt")
+        if isinstance(value, dict):
+            source_truncated = bool(value.get("truncated"))
+            value = value.get("value")
+        if isinstance(value, str):
+            prompt = value
+            break
+    if prompt is None:
+        return None, source_truncated
+    compact = re.sub(r"\s+", " ", prompt).strip()
+    return compact[:160], source_truncated or len(compact) > 160
 
 def _page(data: list[dict[str, Any]], total: int, page: int, page_size: int, request_id: str) -> dict[str, Any]:
     return {"data": data, "meta": {"page": page, "page_size": page_size, "total": total, "has_next": page * page_size < total}, "request_id": request_id}
@@ -179,7 +252,7 @@ def _chunk_content(payload: ImportChunkPartRequest) -> str:
     try:
         raw = base64.b64decode(payload.content_base64, validate=True)
     except (ValueError, base64.binascii.Error) as error:
-        raise ValueError("content_base64 ????? Base64") from error
+        raise ValueError("content_base64 不是有效的 Base64") from error
     return "base64:" + base64.b64encode(raw).decode("ascii")
 
 
@@ -188,7 +261,7 @@ def _chunk_size(payload: ImportChunkPartRequest) -> int:
         try:
             return len(base64.b64decode(payload.content_base64, validate=True))
         except (ValueError, base64.binascii.Error) as error:
-            raise ValueError("content_base64 ????? Base64") from error
+            raise ValueError("content_base64 不是有效的 Base64") from error
     return len(payload.content.encode("utf-8"))
 
 
@@ -211,11 +284,15 @@ class AdminLoginRequest(BaseModel):
 class TaskRunListItem(BaseModel):
     id: int
     project_id: int
+    project_key: str
     session_key: str
+    prompt_excerpt: str | None
+    prompt_truncated: bool
     status: str
     started_at: str | None
     ended_at: str | None
     current_report_revision: int
+    uncertain: bool | None
 
 
 class TaskRunPageMeta(BaseModel):
@@ -337,7 +414,8 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     def login(payload: AdminLoginRequest, request: Request) -> dict[str, Any]:
         expected_username = os.environ.get("CODEX_MEMORY_ADMIN_USERNAME", "admin")
         expected_password = os.environ.get("CODEX_MEMORY_ADMIN_PASSWORD", "")
-        if not expected_password:
+        session_secret = os.environ.get("CODEX_MEMORY_ADMIN_SESSION_SECRET", "")
+        if expected_username.strip().lower() == "admin" or is_placeholder_value(expected_password) or is_placeholder_value(session_secret):
             raise _error(request, "login_not_configured", "管理后台登录尚未配置", status.HTTP_503_SERVICE_UNAVAILABLE)
         if not (secrets.compare_digest(payload.username, expected_username) and secrets.compare_digest(payload.password, expected_password)):
             raise _error(request, "invalid_credentials", "用户名或密码错误", status.HTTP_401_UNAUTHORIZED)
@@ -390,7 +468,21 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     def list_response(request: Request, rows: list[Any], total: int, page: int, page_size: int, mapper: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
         return _page([mapper(row) for row in rows], total, page, page_size, _request_id(request))
 
-    def query_rows(model: Any, project_id: int | None, page: int, page_size: int, sort: str, order: str, scope_id: str | None = None) -> tuple[list[Any], int]:
+    def query_rows(
+        model: Any,
+        project_id: int | None,
+        page: int,
+        page_size: int,
+        sort: str,
+        order: str,
+        scope_id: str | None = None,
+        *,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        filters: dict[str, Any] | None = None,
+        keyword: str | None = None,
+        keyword_fields: tuple[str, ...] = (),
+    ) -> tuple[list[Any], int]:
         with session_factory() as session:
             query = select(model)
             if project_id is not None and hasattr(model, "project_id"):
@@ -409,44 +501,191 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
                     query = query.where(model.scope_id == project_id)
             elif scope_id and hasattr(model, "scope") and str(scope_id) not in {"default", "project"}:
                 query = query.where(model.scope.in_([scope_id, "project"]))
+            created_column = getattr(model, "created_at", None)
+            if created_column is None and (created_from is not None or created_to is not None):
+                # 没有时间证据的记录不能被视为命中指定时间窗。
+                query = query.where(false())
+            elif created_column is not None:
+                if created_from is not None:
+                    query = query.where(created_column >= created_from)
+                if created_to is not None:
+                    query = query.where(created_column <= created_to)
+            for field, value in (filters or {}).items():
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    continue
+                column = getattr(model, field, None)
+                if column is not None:
+                    if isinstance(value, (tuple, list, set, frozenset)):
+                        query = query.where(column.in_(value))
+                    else:
+                        query = query.where(column == (value.strip() if isinstance(value, str) else value))
+            if keyword and keyword.strip() and keyword_fields:
+                pattern = _literal_like_pattern(keyword)
+                keyword_conditions = [
+                    cast(getattr(model, field), String).ilike(pattern, escape="\\")
+                    for field in keyword_fields
+                    if getattr(model, field, None) is not None
+                ]
+                if keyword_conditions:
+                    query = query.where(or_(*keyword_conditions))
             total = int(session.scalar(select(func.count()).select_from(query.subquery())) or 0)
-            column = getattr(model, sort, None) or getattr(model, "created_at", model.id)
+            column = getattr(model, sort, None)
+            if column is None:
+                column = getattr(model, "created_at", model.id)
             query = query.order_by(column.asc() if order == "asc" else column.desc(), model.id.desc())
             return session.scalars(query.offset((page - 1) * page_size).limit(page_size)).all(), total
 
     @router.get("/me")
     def me(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
-        return {"data": {"project_key": current.project_key, "permissions": sorted(current.permissions)}, "request_id": _request_id(request)}
+        return {
+            "data": {
+                "project_key": current.project_key,
+                "permissions": sorted(current.permissions),
+                "display_name": current.display_name,
+                "auth_type": current.auth_type,
+                "expires_at": _row_value(current, "expires_at"),
+            },
+            "request_id": _request_id(request),
+        }
 
     @router.get("/dashboard")
-    def dashboard(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+    def dashboard(
+        request: Request,
+        project_key: str | None = None,
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
+        resolved_project_key = project_key or (current.project_key if current.project_key != "*" else None)
+        project_id = project_context(request, resolved_project_key, None, current, strict_access=True).id if resolved_project_key else None
         with session_factory() as session:
-            project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == current.project_key))
-            project_id = project.id if project else None
-            counts: dict[str, int] = {}
-            for name, model in (("raw_records", MessageRow), ("candidates", MemoryCandidateRow), ("memories", MemoryRow), ("jobs", ProcessingJobRow)):
+            inspector = inspect(session.bind)
+            table_names = set(inspector.get_table_names())
+
+            def count_rows(model: Any, *conditions: Any) -> int:
+                if model.__tablename__ not in table_names:
+                    return 0
                 query = select(func.count()).select_from(model)
                 if project_id is not None and hasattr(model, "project_id"):
                     query = query.where(model.project_id == project_id)
-                counts[name] = int(session.scalar(query) or 0)
-        return {"data": counts, "request_id": _request_id(request)}
+                if conditions:
+                    query = query.where(*conditions)
+                return int(session.scalar(query) or 0)
+
+            counts: dict[str, int] = {}
+            for name, model in (("raw_records", MessageRow), ("candidates", MemoryCandidateRow), ("memories", MemoryRow), ("jobs", ProcessingJobRow)):
+                counts[name] = count_rows(model)
+
+            uncertain_task_runs = 0
+            if TaskReportRow.__tablename__ in table_names:
+                uncertain_query = select(func.count(func.distinct(TaskReportRow.task_run_id))).where(TaskReportRow.uncertain.is_(True))
+                if project_id is not None:
+                    uncertain_query = uncertain_query.where(TaskReportRow.project_id == project_id)
+                uncertain_task_runs = int(session.scalar(uncertain_query) or 0)
+
+            audit_query = select(AuditLogRow)
+            if project_id is not None:
+                audit_query = audit_query.where(AuditLogRow.project_id == project_id)
+            recent_audits = session.scalars(audit_query.order_by(AuditLogRow.created_at.desc(), AuditLogRow.id.desc()).limit(8)).all()
+            data = {
+                **counts,
+                "project_key": resolved_project_key,
+                "attention": {
+                    "pending_candidates": count_rows(MemoryCandidateRow, MemoryCandidateRow.status.in_(("generated", "pending", "pending_review"))),
+                    "failed_jobs": count_rows(ProcessingJobRow, ProcessingJobRow.status == "failed"),
+                    "dead_letters": count_rows(OutboxEventRow, OutboxEventRow.status == "dead"),
+                    "active_imports": count_rows(ImportBatchRow, ImportBatchRow.status.notin_(("completed", "failed", "cancelled", "rolled_back"))),
+                    "uncertain_task_runs": uncertain_task_runs,
+                    "proposed_revisions": count_rows(ContractRevisionRow, ContractRevisionRow.status == "proposed"),
+                },
+                "pipeline": {
+                    "l0": counts["raw_records"],
+                    "raw_records": counts["raw_records"],
+                    "candidate": counts["candidates"],
+                    "candidates": counts["candidates"],
+                    "memory": counts["memories"],
+                    "memories": counts["memories"],
+                    "l1": count_rows(MemoryRow, MemoryRow.level == "L1"),
+                    "l2": count_rows(MemoryRow, MemoryRow.level == "L2"),
+                    "l3": count_rows(MemoryRow, MemoryRow.level == "L3"),
+                },
+                "recent_audit_events": [
+                    {
+                        "id": row.id,
+                        "event_type": row.event_type,
+                        "subject_type": row.subject_type,
+                        "subject_id": row.subject_id,
+                        "created_at": _row_value(row, "created_at"),
+                    }
+                    for row in recent_audits
+                ],
+            }
+        return {"data": data, "request_id": _request_id(request)}
 
     @router.get("/projects")
-    def projects(request: Request, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
+    def projects(
+        request: Request,
+        status_filter: str | None = Query(default=None, alias="status"),
+        keyword: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
         page, page_size, sort, order, _ = paging
         with session_factory() as session:
             query = select(ProjectRow)
             if "admin" not in current.permissions:
                 query = query.where(ProjectRow.project_key == current.project_key)
+            if status_filter and status_filter.strip():
+                query = query.where(ProjectRow.status == status_filter.strip())
+            if keyword and keyword.strip():
+                pattern = _literal_like_pattern(keyword)
+                query = query.where(
+                    or_(
+                        ProjectRow.project_key.ilike(pattern, escape="\\"),
+                        ProjectRow.name.ilike(pattern, escape="\\"),
+                        ProjectRow.repository.ilike(pattern, escape="\\"),
+                    )
+                )
             total = int(session.scalar(select(func.count()).select_from(query.subquery())) or 0)
             column = getattr(ProjectRow, sort, ProjectRow.created_at)
             rows = session.scalars(query.order_by(column.asc() if order == "asc" else column.desc()).offset((page - 1) * page_size).limit(page_size)).all()
-            return list_response(request, rows, total, page, page_size, lambda row: {"project_key": row.project_key, "name": row.name, "repository": row.repository, "status": row.status})
+            has_scopes = inspect(session.bind).has_table("knowledge_scopes")
+            scope_counts = {
+                row.id: int(
+                    session.execute(
+                        text("SELECT COUNT(1) FROM knowledge_scopes WHERE project_id = :project_id"),
+                        {"project_id": row.id},
+                    ).scalar()
+                    or 0
+                )
+                for row in rows
+            } if has_scopes else {row.id: 0 for row in rows}
+            return list_response(
+                request,
+                rows,
+                total,
+                page,
+                page_size,
+                lambda row: {
+                    "id": row.id,
+                    "project_key": row.project_key,
+                    "name": row.name,
+                    "repository": row.repository,
+                    "status": row.status,
+                    "scope_count": scope_counts[row.id],
+                },
+            )
 
     @router.get("/projects/{project_key}")
     def project_detail(project_key: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         project = project_context(request, project_key, None, current)
-        return {"data": {"id": project.id, "project_key": project.project_key, "name": project.name, "repository": project.repository, "description": project.description, "status": project.status}, "request_id": _request_id(request)}
+        with session_factory() as session:
+            scope_count = int(
+                session.execute(
+                    text("SELECT COUNT(1) FROM knowledge_scopes WHERE project_id = :project_id"),
+                    {"project_id": project.id},
+                ).scalar()
+                or 0
+            ) if inspect(session.bind).has_table("knowledge_scopes") else 0
+        return {"data": {"id": project.id, "project_key": project.project_key, "name": project.name, "repository": project.repository, "description": project.description, "status": project.status, "scope_count": scope_count}, "request_id": _request_id(request)}
 
     @router.post("/contract-services")
     def create_contract_service(payload: ContractServiceCreateRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
@@ -486,15 +725,22 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         total = len(rows)
         page_rows = rows[(page - 1) * page_size: page * page_size]
         project_ids = {row.project_id for row in page_rows}
+        service_ids = {row.id for row in page_rows}
         with session_factory() as session:
             project_keys = {
                 row.id: row.project_key
                 for row in session.scalars(select(ProjectRow).where(ProjectRow.id.in_(project_ids))).all()
             } if project_ids else {}
+            revision_sizes = {
+                revision_id: _contract_document_size(source_document)
+                for revision_id, source_document in session.execute(
+                    select(ContractRevisionRow.id, ContractRevisionRow.source_document).where(ContractRevisionRow.service_id.in_(service_ids))
+                ).all()
+            } if service_ids else {}
         items = []
         for row in page_rows:
             detail = contract_service.service_detail(row.id, row.project_id)
-            items.append(_contract_service_payload(detail, project_keys.get(row.project_id)))
+            items.append(_contract_service_payload(detail, project_keys.get(row.project_id), revision_sizes))
         return _page(items, total, page, page_size, _request_id(request))
 
     def _contract_service_project(request: Request, service_id: int, current: Principal, *, require_admin: bool = False) -> tuple[ContractServiceRow, int, str]:
@@ -528,7 +774,14 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             detail = contract_service.service_detail(row.id, project_id)
         except LookupError as error:
             raise _error(request, "contract_service_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
-        return {"data": _contract_service_payload(detail, project_key), "meta": {}, "request_id": _request_id(request)}
+        with session_factory() as session:
+            revision_sizes = {
+                revision_id: _contract_document_size(source_document)
+                for revision_id, source_document in session.execute(
+                    select(ContractRevisionRow.id, ContractRevisionRow.source_document).where(ContractRevisionRow.service_id == row.id)
+                ).all()
+            }
+        return {"data": _contract_service_payload(detail, project_key, revision_sizes), "meta": {}, "request_id": _request_id(request)}
 
     @router.post("/contract-services/{service_id}/revisions")
     def upload_contract_revision(service_id: int, request: Request, file: UploadFile = File(...), current: Principal = Depends(principal)) -> dict[str, Any]:
@@ -549,7 +802,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:
             raise _error(request, "contract_service_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
-        data = contract_service.get_revision(row.id, revision.revision_number, project_id)
+        data = _contract_revision_payload(contract_service.get_revision(row.id, revision.revision_number, project_id))
         return {"data": data, "meta": {"reused": reused}, "request_id": _request_id(request)}
 
     @router.get("/contract-services/{service_id}/revisions/{revision_number}")
@@ -560,7 +813,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         row, project_id, _ = _contract_service_project(request, service_id, current)
         try:
-            data = contract_service.get_revision(row.id, revision_number, project_id)
+            data = _contract_revision_payload(contract_service.get_revision(row.id, revision_number, project_id))
         except LookupError as error:
             raise _error(request, "contract_revision_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
         return {"data": data, "meta": {}, "request_id": _request_id(request)}
@@ -577,7 +830,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             raise _error(request, _contract_revision_error_code(error.code), str(error), status.HTTP_409_CONFLICT, meta=error.meta) from error
         except LookupError as error:
             raise _error(request, "contract_revision_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
-        data = contract_service.get_revision(row.id, revision.revision_number, project_id)
+        data = _contract_revision_payload(contract_service.get_revision(row.id, revision.revision_number, project_id))
         return {"data": data, "meta": {"idempotent": idempotent}, "request_id": _request_id(request)}
 
     @router.get("/projects/{project_key}/scopes")
@@ -594,46 +847,241 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     @router.get("/scopes")
     def scopes_alias(request: Request, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
         return scopes(current.project_key, request, current, paging)
-    def query_list(model: Any, mapper: Callable[[Any], dict[str, Any]], project_key: str | None, scope_id: str | None, request: Request, current: Principal, paging: tuple[int, int, str, str, str]) -> dict[str, Any]:
+    def query_list(
+        model: Any,
+        mapper: Callable[[Any], dict[str, Any]],
+        project_key: str | None,
+        scope_id: str | None,
+        request: Request,
+        current: Principal,
+        paging: tuple[int, int, str, str, str],
+        *,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        filters: dict[str, Any] | None = None,
+        keyword: str | None = None,
+        keyword_fields: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
         project_id = None
         if project_key:
             project_id = project_context(request, project_key, scope_id, current).id
         elif "admin" not in current.permissions:
             project_id = project_context(request, current.project_key, scope_id, current).id
         page, page_size, sort, order, _ = paging
+        created_from = _utc_datetime(created_from)
+        created_to = _utc_datetime(created_to)
+        if created_from is not None and created_to is not None and created_from > created_to:
+            raise _error(request, "invalid_date_range", "开始时间不能晚于结束时间", status.HTTP_422_UNPROCESSABLE_ENTITY)
         try:
-            rows, total = query_rows(model, project_id, page, page_size, sort, order, scope_id)
+            rows, total = query_rows(
+                model,
+                project_id,
+                page,
+                page_size,
+                sort,
+                order,
+                scope_id,
+                created_from=created_from,
+                created_to=created_to,
+                filters=filters,
+                keyword=keyword,
+                keyword_fields=keyword_fields,
+            )
         except OperationalError:
             rows, total = [], 0
         return list_response(request, rows, total, page, page_size, mapper)
 
     @router.get("/raw-records")
-    def raw_records(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
-        return query_list(MessageRow, lambda row: {"id": row.id, "project_id": row.project_id, "event_key": row.event_key, "role": row.role, "content": _redact(row.content), "source": row.source, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
+    def raw_records(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        role: str | None = None,
+        keyword: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            MessageRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "event_key": row.event_key, "role": row.role, "content": _redact(row.content), "source": row.source, "created_at": _row_value(row, "created_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+            created_from=created_from,
+            created_to=created_to,
+            filters={"role": role},
+            keyword=keyword,
+            keyword_fields=("event_key", "content", "source"),
+        )
 
     @router.get("/candidates")
-    def candidates(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
-        return query_list(MemoryCandidateRow, lambda row: {"id": row.id, "project_id": row.project_id, "level": row.level, "scope": row.scope, "memory_type": row.memory_type, "title": row.title, "content": _redact(row.content), "status": row.status, "abstain": row.abstain, "published_memory_id": row.published_memory_id, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
+    def candidates(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        status_filter: str | None = Query(default=None, alias="status"),
+        level: str | None = None,
+        memory_type: str | None = None,
+        keyword: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            MemoryCandidateRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "level": row.level, "scope": row.scope, "memory_type": row.memory_type, "title": row.title, "content": _redact(row.content), "status": row.status, "abstain": row.abstain, "model_confidence": row.model_confidence, "published_memory_id": row.published_memory_id, "created_at": _row_value(row, "created_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+            created_from=created_from,
+            created_to=created_to,
+            filters={
+                "status": ("generated", "pending", "pending_review") if status_filter == "pending" else status_filter,
+                "level": level,
+                "memory_type": memory_type,
+            },
+            keyword=keyword,
+            keyword_fields=("title", "content"),
+        )
 
     @router.get("/memories")
-    def memories(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
-        return query_list(MemoryRow, lambda row: {"id": row.id, "project_id": row.project_id, "level": row.level, "memory_type": row.memory_type, "title": row.title, "content": _redact(row.content), "confidence": row.confidence, "status": row.status, "scope": row.scope, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
+    def memories(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        status_filter: str | None = Query(default=None, alias="status"),
+        level: str | None = None,
+        memory_type: str | None = None,
+        keyword: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            MemoryRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "level": row.level, "memory_type": row.memory_type, "title": row.title, "content": _redact(row.content), "confidence": row.confidence, "status": row.status, "scope": row.scope, "created_at": _row_value(row, "created_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+            created_from=created_from,
+            created_to=created_to,
+            filters={"status": status_filter, "level": level, "memory_type": memory_type},
+            keyword=keyword,
+            keyword_fields=("title", "content"),
+        )
 
     @router.get("/jobs")
-    def jobs(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
-        return query_list(ProcessingJobRow, lambda row: {"id": row.id, "project_id": row.project_id, "job_type": row.job_type, "job_key": row.job_key, "status": row.status, "attempt_count": row.attempt_count, "last_error_code": row.last_error_code, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
+    def jobs(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        status_filter: str | None = Query(default=None, alias="status"),
+        job_type: str | None = None,
+        keyword: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            ProcessingJobRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "job_type": row.job_type, "job_key": row.job_key, "status": row.status, "attempt_count": row.attempt_count, "last_error_code": row.last_error_code, "created_at": _row_value(row, "created_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+            created_from=created_from,
+            created_to=created_to,
+            filters={"status": status_filter, "job_type": job_type},
+            keyword=keyword,
+            keyword_fields=("job_key", "source_id", "last_error_message"),
+        )
 
     @router.get("/outbox-events")
-    def outbox_events(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
-        return query_list(OutboxEventRow, lambda row: {"id": row.id, "project_id": row.project_id, "event_type": row.event_type, "status": row.status, "attempt_count": row.attempt_count, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
+    def outbox_events(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        status_filter: str | None = Query(default=None, alias="status"),
+        event_type: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            OutboxEventRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "event_type": row.event_type, "status": row.status, "attempt_count": row.attempt_count, "created_at": _row_value(row, "created_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+            created_from=created_from,
+            created_to=created_to,
+            filters={"status": status_filter, "event_type": event_type},
+        )
 
     @router.get("/retrieval-audits")
-    def retrieval_audits(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
-        return query_list(RetrievalAuditRow, lambda row: {"id": row.id, "project_id": row.project_id, "retrieval_mode": row.retrieval_mode, "degraded": row.degraded, "degraded_reason": row.degraded_reason, "latency_ms": row.latency_ms}, project_key, scope_id, request, current, paging)
+    def retrieval_audits(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        degraded: bool | None = None,
+        retrieval_mode: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            RetrievalAuditRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "retrieval_mode": row.retrieval_mode, "degraded": row.degraded, "degraded_reason": row.degraded_reason, "latency_ms": row.latency_ms, "created_at": None},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+            created_from=created_from,
+            created_to=created_to,
+            filters={"degraded": degraded, "retrieval_mode": retrieval_mode},
+        )
 
     @router.get("/audit-events")
-    def audit_events(request: Request, project_key: str | None = None, scope_id: str | None = None, current: Principal = Depends(principal), paging: tuple[int, int, str, str, str] = Depends(pagination)) -> dict[str, Any]:
-        return query_list(AuditLogRow, lambda row: {"id": row.id, "project_id": row.project_id, "event_type": row.event_type, "subject_type": row.subject_type, "subject_id": row.subject_id, "created_at": _row_value(row, "created_at")}, project_key, scope_id, request, current, paging)
+    def audit_events(
+        request: Request,
+        project_key: str | None = None,
+        scope_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        event_type: str | None = None,
+        subject_type: str | None = None,
+        current: Principal = Depends(principal),
+        paging: tuple[int, int, str, str, str] = Depends(pagination),
+    ) -> dict[str, Any]:
+        return query_list(
+            AuditLogRow,
+            lambda row: {"id": row.id, "project_id": row.project_id, "event_type": row.event_type, "subject_type": row.subject_type, "subject_id": row.subject_id, "created_at": _row_value(row, "created_at")},
+            project_key,
+            scope_id,
+            request,
+            current,
+            paging,
+            created_from=created_from,
+            created_to=created_to,
+            filters={"event_type": event_type, "subject_type": subject_type},
+        )
 
 
 
@@ -642,6 +1090,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         request: Request,
         project_key: str | None = None,
         scope_id: str | None = None,
+        status_filter: str | None = Query(default=None, alias="status"),
         current: Principal = Depends(principal),
         paging: tuple[int, int, str, str, str] = Depends(pagination),
     ) -> dict[str, Any]:
@@ -653,6 +1102,11 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             request,
             current,
             paging,
+            filters={
+                "status": (
+                    "pending", "queued", "uploading", "running", "processing", "awaiting_review"
+                ) if status_filter == "active" else status_filter,
+            },
         )
 
     @router.post("/import-batches")
@@ -721,12 +1175,12 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         with session_factory() as session:
             batch = session.get(ImportBatchRow, batch_id)
             if batch is None:
-                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
             project = session.get(ProjectRow, batch.project_id)
             if project is None:
-                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
             if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
-                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
             try:
                 require_project_access(current, project.project_key)
             except ProjectAccessDenied as error:
@@ -744,19 +1198,19 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         with session_factory() as session:
             batch = session.get(ImportBatchRow, batch_id)
             if batch is None:
-                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
             project = session.get(ProjectRow, batch.project_id)
             if project is None:
-                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
             if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
-                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
             try:
                 require_project_access(current, project.project_key)
             except ProjectAccessDenied as error:
                 raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
             rows = session.scalars(select(ImportUploadPartRow).where(ImportUploadPartRow.import_batch_id == batch_id, ImportUploadPartRow.upload_id == upload_id).order_by(ImportUploadPartRow.part_number)).all()
             if not rows:
-                raise _error(request, "upload_not_found", "?????????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "upload_not_found", "分片上传不存在", status.HTTP_404_NOT_FOUND)
             return {"data": {"upload_id": upload_id, "source_name": rows[0].source_name, "source_type": rows[0].source_type, "total_parts": rows[0].total_parts, "uploaded_parts": [row.part_number for row in rows if row.status in {"uploaded", "completed"}], "status": "completed" if all(row.status == "completed" for row in rows) else "uploading"}, "request_id": _request_id(request)}
 
     @router.put("/import-batches/{batch_id}/uploads/{upload_id}/parts/{part_number}")
@@ -767,17 +1221,17 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         except ValueError as error:
             raise _error(request, "invalid_import_content", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
         if size > 4 * 1024 * 1024:
-            raise _error(request, "import_part_too_large", "???????? 4 MiB", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+            raise _error(request, "import_part_too_large", "单个导入分片不能超过 4 MiB", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
         from ..pipelines.v131_import import KnowledgeImportService
         with session_factory() as session:
             batch = session.get(ImportBatchRow, batch_id)
             if batch is None:
-                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
             project = session.get(ProjectRow, batch.project_id)
             if project is None:
-                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
             if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
-                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
             try:
                 require_project_access(current, project.project_key)
             except ProjectAccessDenied as error:
@@ -785,7 +1239,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             part = session.scalar(select(ImportUploadPartRow).where(ImportUploadPartRow.import_batch_id == batch_id, ImportUploadPartRow.upload_id == upload_id).order_by(ImportUploadPartRow.part_number))
             if part is None:
                 if payload.total_parts is None or not payload.source_name:
-                    raise _error(request, "upload_not_found", "?????????????????", status.HTTP_404_NOT_FOUND)
+                    raise _error(request, "upload_not_found", "分片上传不存在，请先初始化上传", status.HTTP_404_NOT_FOUND)
                 source_name, source_type, total_parts = payload.source_name, payload.source_type, payload.total_parts
             else:
                 source_name, source_type, total_parts = part.source_name, part.source_type, part.total_parts
@@ -802,12 +1256,12 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         with session_factory() as session:
             batch = session.get(ImportBatchRow, batch_id)
             if batch is None:
-                raise _error(request, "batch_not_found", "???????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "batch_not_found", "导入批次不存在", status.HTTP_404_NOT_FOUND)
             project = session.get(ProjectRow, batch.project_id)
             if project is None:
-                raise _error(request, "project_not_found", "?????", status.HTTP_404_NOT_FOUND)
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
             if not _scope_allowed(session, project, batch.scope_id or batch.scope_key):
-                raise _error(request, "scope_access_denied", f"??????????{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
+                raise _error(request, "scope_access_denied", f"令牌无权访问作用域：{batch.scope_id or batch.scope_key}", status.HTTP_403_FORBIDDEN)
             try:
                 require_project_access(current, project.project_key)
             except ProjectAccessDenied as error:
@@ -1081,30 +1535,103 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     def task_runs(
         request: Request,
         project_key: str | None = None,
+        status_filter: str | None = Query(default=None, alias="status"),
+        uncertain: bool | None = None,
+        keyword: str | None = None,
+        started_from: datetime | None = None,
+        started_to: datetime | None = None,
         current: Principal = Depends(principal),
         paging: tuple[int, int, str, str, str] = Depends(pagination),
     ) -> dict[str, Any]:
-        page, page_size, _sort, _order, request_id = paging
+        page, page_size, sort, order, request_id = paging
         project_id: int | None = None
         if project_key:
             project_id = project_context(request, project_key, None, current).id
         elif "admin" not in current.permissions:
             project_id = project_context(request, current.project_key, None, current).id
+        started_from = _utc_datetime(started_from)
+        started_to = _utc_datetime(started_to)
+        if started_from is not None and started_to is not None and started_from > started_to:
+            raise _error(request, "invalid_date_range", "开始时间不能晚于结束时间", status.HTTP_422_UNPROCESSABLE_ENTITY)
         with session_factory() as session:
             query = select(TaskRunRow)
             if project_id is not None:
                 query = query.where(TaskRunRow.project_id == project_id)
+            if status_filter and status_filter.strip():
+                query = query.where(TaskRunRow.status == status_filter.strip())
+            if uncertain is not None:
+                latest_uncertain = (
+                    select(TaskReportRow.uncertain)
+                    .where(TaskReportRow.task_run_id == TaskRunRow.id)
+                    .order_by(TaskReportRow.revision.desc(), TaskReportRow.id.desc())
+                    .limit(1)
+                    .scalar_subquery()
+                )
+                query = query.where(latest_uncertain.is_(uncertain))
+            if started_from is not None:
+                query = query.where(TaskRunRow.started_at >= started_from)
+            if started_to is not None:
+                query = query.where(TaskRunRow.started_at <= started_to)
+            if keyword and keyword.strip():
+                pattern = _literal_like_pattern(keyword)
+                prompt_values = (
+                    TaskEventRow.payload_json["payload"]["prompt"]["value"].as_string(),
+                    TaskEventRow.payload_json["payload"]["prompt"].as_string(),
+                    TaskEventRow.payload_json["metadata"]["prompt"]["value"].as_string(),
+                    TaskEventRow.payload_json["metadata"]["prompt"].as_string(),
+                    TaskEventRow.metadata_json["prompt"]["value"].as_string(),
+                    TaskEventRow.metadata_json["prompt"].as_string(),
+                )
+                prompt_match = select(TaskEventRow.id).where(
+                    TaskEventRow.task_run_id == TaskRunRow.id,
+                    TaskEventRow.event_type == "UserPromptSubmit",
+                    or_(*(value.ilike(pattern, escape="\\") for value in prompt_values)),
+                ).exists()
+                query = query.where(or_(TaskRunRow.session_key.ilike(pattern, escape="\\"), prompt_match))
             total = int(session.scalar(select(func.count()).select_from(query.subquery())) or 0)
-            rows = session.scalars(query.order_by(TaskRunRow.created_at.desc(), TaskRunRow.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+            sort_column = getattr(TaskRunRow, sort, None)
+            if sort_column is None:
+                sort_column = TaskRunRow.created_at
+            rows = session.scalars(
+                query.order_by(sort_column.asc() if order == "asc" else sort_column.desc(), TaskRunRow.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+            run_ids = [row.id for row in rows]
+            project_ids = {row.project_id for row in rows}
+            project_keys = {
+                row.id: row.project_key
+                for row in session.scalars(select(ProjectRow).where(ProjectRow.id.in_(project_ids))).all()
+            } if project_ids else {}
+            prompt_events: dict[int, TaskEventRow] = {}
+            latest_reports: dict[int, TaskReportRow] = {}
+            if run_ids:
+                for event in session.scalars(
+                    select(TaskEventRow)
+                    .where(TaskEventRow.task_run_id.in_(run_ids), TaskEventRow.event_type == "UserPromptSubmit")
+                    .order_by(TaskEventRow.task_run_id, TaskEventRow.sequence_no, TaskEventRow.id)
+                ).all():
+                    prompt_events.setdefault(event.task_run_id, event)
+                for report in session.scalars(
+                    select(TaskReportRow)
+                    .where(TaskReportRow.task_run_id.in_(run_ids))
+                    .order_by(TaskReportRow.task_run_id, TaskReportRow.revision.desc(), TaskReportRow.id.desc())
+                ).all():
+                    latest_reports.setdefault(report.task_run_id, report)
+            prompt_summaries = {run_id: _task_prompt(event) for run_id, event in prompt_events.items()}
             data = [
                 TaskRunListItem(
                     id=row.id,
                     project_id=row.project_id,
+                    project_key=project_keys.get(row.project_id, ""),
                     session_key=row.session_key,
+                    prompt_excerpt=prompt_summaries.get(row.id, (None, False))[0],
+                    prompt_truncated=prompt_summaries.get(row.id, (None, False))[1],
                     status=row.status,
                     started_at=_row_value(row, "started_at"),
                     ended_at=_row_value(row, "ended_at"),
                     current_report_revision=row.current_report_revision,
+                    uncertain=latest_reports[row.id].uncertain if row.id in latest_reports else None,
                 ).model_dump()
                 for row in rows
             ]
@@ -1173,6 +1700,10 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
 
     @router.get("/system/status")
     def system_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        try:
+            require_permission(current, "operations_read")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         try:
             db_ok = "ok"
             with session_factory() as session:

@@ -1,0 +1,2 @@
+import{o as n,c as o,a,O as l,m as s}from"./vue-core-DTY9XJ2Q.js";const u=["open"],m={__name:"StructuredDataViewer",props:{value:{type:[Object,Array,String,Number,Boolean],default:null},title:{type:String,default:"查看原始数据"},open:{type:Boolean,default:!1}},setup(e){const t=e,r=s(()=>typeof t.value=="string"?t.value:JSON.stringify(t.value,null,2));return(c,i)=>(n(),o("details",{class:"structured-viewer",open:e.open},[a("summary",null,l(e.title),1),a("pre",null,l(r.value||"暂无数据"),1)],8,u))}};export{m as _};
+//# sourceMappingURL=StructuredDataViewer-BMvDYK9i.js.map

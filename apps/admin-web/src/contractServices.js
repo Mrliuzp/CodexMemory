@@ -1,5 +1,27 @@
 import { adminGet, adminPost, adminUpload } from './api'
 
+export const contractStatusOptions = [
+  { value: 'proposed', label: '待发布' },
+  { value: 'published', label: '已发布' },
+  { value: 'superseded', label: '已被替代' },
+]
+
+export function compactContractParams(params = {}) {
+  return Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== ''),
+  )
+}
+
+export function buildContractServiceListParams(filters = {}) {
+  return compactContractParams({
+    project_key: filters.projectKey,
+    status: filters.status,
+    keyword: filters.keyword,
+    page: filters.page || 1,
+    page_size: filters.pageSize || 20,
+  })
+}
+
 function servicePath(serviceId) {
   return `/contract-services/${encodeURIComponent(serviceId)}`
 }
@@ -54,6 +76,22 @@ export function extractContractRevision(payload) {
 
 export function getContractRevisionMarkdown(revision) {
   return revision?.markdown_document ?? revision?.markdown ?? ''
+}
+
+export function getContractValidation(revision = {}) {
+  const validation = revision.validation || revision.validation_result || revision.validation_summary || {}
+  return {
+    errors: Array.isArray(validation.errors) ? validation.errors : (Array.isArray(revision.validation_errors) ? revision.validation_errors : []),
+    warnings: Array.isArray(validation.warnings) ? validation.warnings : (Array.isArray(revision.warnings) ? revision.warnings : []),
+  }
+}
+
+export function canPublishContractRevision(revision = {}) {
+  return revision.status === 'proposed' && Boolean(revision.content_hash) && getContractValidation(revision).errors.length === 0
+}
+
+export function isStableServiceKey(value) {
+  return /^[a-z0-9][a-z0-9._-]{1,79}$/.test(String(value || '').trim())
 }
 
 export function extractPagination(payload, fallbackPage = 1, fallbackPageSize = 20) {

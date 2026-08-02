@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { adminGet } from './api'
 import {
+  buildTaskRunListParams,
   extractPagination,
   extractTaskRun,
   extractTaskRuns,
   getTaskRun,
   getTaskRunReport,
   listTaskRuns,
+  taskRunProjectLabel,
+  taskRunPrompt,
   unwrapData,
 } from './taskRuns'
 
@@ -47,6 +50,38 @@ describe('任务报告只读数据访问', () => {
     expect(taskRun.git_baseline.branch).toBe('main')
     expect(taskRun.events[0].sequence_no).toBe(1)
     expect(taskRun.reports[0].report_kind).toBe('final')
+  })
+
+  it('把页面筛选转换为可复制的查询参数并移除空值', () => {
+    expect(buildTaskRunListParams({
+      projectKey: 'demo',
+      status: 'failed',
+      uncertain: 'true',
+      keyword: '迁移',
+      startedFrom: '2026-08-01T00:00:00',
+      startedTo: '',
+      sort: 'started_at',
+      order: 'desc',
+      page: 2,
+      pageSize: 50,
+    })).toEqual({
+      project_key: 'demo',
+      status: 'failed',
+      uncertain: 'true',
+      keyword: '迁移',
+      started_from: '2026-08-01T00:00:00',
+      sort: 'started_at',
+      order: 'desc',
+      page: 2,
+      page_size: 50,
+    })
+  })
+
+  it('优先展示后端提供的项目键和脱敏摘要', () => {
+    const row = { project_key: 'erp', project_id: 7, prompt_excerpt: '修复导入任务', prompt_truncated: true }
+    expect(taskRunProjectLabel(row)).toBe('erp')
+    expect(taskRunPrompt(row)).toBe('修复导入任务')
+    expect(taskRunProjectLabel({ project_id: 7 })).toBe('项目 #7')
   })
 
 })

@@ -7,6 +7,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -30,6 +31,9 @@ class ProjectAccessDenied(PermissionError):
 class Principal:
     project_key: str
     permissions: frozenset[str]
+    display_name: str | None = None
+    auth_type: str | None = None
+    expires_at: datetime | None = None
 
 
 def hash_token(token: str) -> str:
@@ -40,7 +44,14 @@ def issue_admin_session(username: str, project_key: str = "*", ttl_seconds: int 
     secret = os.environ.get("CODEX_MEMORY_ADMIN_SESSION_SECRET", "")
     if not secret:
         raise RuntimeError("CODEX_MEMORY_ADMIN_SESSION_SECRET is not configured")
-    payload = {"sub": username, "project_key": project_key, "permissions": ["admin", "read"], "exp": int(time.time()) + ttl_seconds}
+    payload = {
+        "sub": username,
+        "display_name": username,
+        "auth_type": "session",
+        "project_key": project_key,
+        "permissions": ["admin", "read"],
+        "exp": int(time.time()) + ttl_seconds,
+    }
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(secret.encode(), encoded.encode(), hashlib.sha256).digest()
     return f"cm1.{encoded}.{base64.urlsafe_b64encode(signature).decode().rstrip('=')}"
@@ -57,10 +68,17 @@ def authenticate_admin_session(token: str) -> Principal | None:
         if not secret or not hmac.compare_digest(actual, expected):
             return None
         payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-        if int(payload["exp"]) <= int(time.time()):
+        expires_at = int(payload["exp"])
+        if expires_at <= int(time.time()):
             return None
-        return Principal(project_key=str(payload["project_key"]), permissions=frozenset(payload["permissions"]))
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return Principal(
+            project_key=str(payload["project_key"]),
+            permissions=frozenset(payload["permissions"]),
+            display_name=str(payload.get("display_name") or payload.get("sub") or "") or None,
+            auth_type=str(payload.get("auth_type") or "session"),
+            expires_at=datetime.fromtimestamp(expires_at, tz=timezone.utc),
+        )
+    except (ValueError, KeyError, TypeError, OverflowError, OSError, json.JSONDecodeError):
         return None
 
 
@@ -78,7 +96,11 @@ def authenticate_bearer(session_factory: sessionmaker[Session], token: str) -> P
         if row is None:
             raise TokenAuthenticationError("Bearer 令牌无效")
         api_key, project = row
-        return Principal(project_key=project.project_key, permissions=frozenset(api_key.permissions))
+        return Principal(
+            project_key=project.project_key,
+            permissions=frozenset(api_key.permissions),
+            auth_type="api_key",
+        )
 
 
 def require_project_access(principal: Principal, project_key: str) -> None:

@@ -1,0 +1,2 @@
+import{h as s,a4 as d,l}from"./vue-core-DTY9XJ2Q.js";function f(r,a=3e4){const o=l(null);let e=null;async function t(){await r(),o.value=new Date}function n(){e&&window.clearInterval(e),e=null}function i(){n(),!(typeof document<"u"&&document.hidden)&&(e=window.setInterval(t,a))}function u(){document.hidden?n():(t(),i())}return s(()=>{i(),document.addEventListener("visibilitychange",u)}),d(()=>{n(),document.removeEventListener("visibilitychange",u)}),{lastUpdatedAt:o,refresh:t,start:i,stop:n}}export{f as u};
+//# sourceMappingURL=useVisibilityRefresh-CnQG0oN0.js.map
