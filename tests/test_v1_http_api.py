@@ -28,6 +28,23 @@ def _client() -> TestClient:
     return TestClient(create_v1_app(session_factory))
 
 
+def test_v1_openapi_operation_ids_are_unique() -> None:
+    document = _client().app.openapi()
+    methods = {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
+    operation_ids = [
+        operation["operationId"]
+        for path_item in document["paths"].values()
+        for method, operation in path_item.items()
+        if method in methods
+    ]
+
+    assert len(operation_ids) == len(set(operation_ids))
+    assert "complete_import_upload_colon_alias" in operation_ids
+    assert "start_import_batch_colon_alias" in operation_ids
+    assert "retry_import_batch_colon_alias" in operation_ids
+    assert "cancel_import_batch_colon_alias" in operation_ids
+
+
 def test_v1_append_requires_bearer_token() -> None:
     response = _client().post(
         "/api/v1/append",

@@ -1264,7 +1264,10 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             raise _error(request, "import_part_failed", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
         return {"data": result, "request_id": _request_id(request)}
 
-    @router.post("/import-batches/{batch_id}/uploads/{upload_id}:complete")
+    @router.post(
+        "/import-batches/{batch_id}/uploads/{upload_id}:complete",
+        operation_id="complete_import_upload_colon_alias",
+    )
     @router.post("/import-batches/{batch_id}/uploads/{upload_id}/complete")
     def complete_import_upload(batch_id: int, upload_id: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         require_permission(current, "admin")
@@ -1289,7 +1292,10 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         write_import_audit(project.project_key, "import.upload.completed", "import_batch", str(batch_id), {"upload_id": upload_id, "request_id": _request_id(request)})
         return {"data": result, "request_id": _request_id(request)}
 
-    @router.post("/import-batches/{batch_id}:start")
+    @router.post(
+        "/import-batches/{batch_id}:start",
+        operation_id="start_import_batch_colon_alias",
+    )
     @router.post("/import-batches/{batch_id}/start")
     def start_import_batch(batch_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         require_permission(current, "admin")
@@ -1441,7 +1447,10 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
                 raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
             return {"data": {"id": batch.id, "project_id": batch.project_id, "status": batch.status, "scope_key": batch.scope_key, "source_type": batch.source_type, "source_count": batch.source_count, "processed_count": batch.processed_count, "document_count": batch.document_count, "chunk_count": batch.chunk_count, "error_count": batch.error_count, "retry_count": batch.retry_count, "error_message": batch.error_message, "created_at": _row_value(batch, "created_at"), "started_at": _row_value(batch, "started_at"), "completed_at": _row_value(batch, "completed_at"), "cancelled_at": _row_value(batch, "cancelled_at"), "rolled_back_at": _row_value(batch, "rolled_back_at")}, "request_id": _request_id(request)}
 
-    @router.post("/import-batches/{batch_id}:retry")
+    @router.post(
+        "/import-batches/{batch_id}:retry",
+        operation_id="retry_import_batch_colon_alias",
+    )
     @router.post("/import-batches/{batch_id}/retry")
     def retry_import_batch(batch_id: int, request: Request, payload: ImportBatchCreateRequest | None = None, current: Principal = Depends(principal)) -> dict[str, Any]:
         require_permission(current, "admin")
@@ -1496,7 +1505,10 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         write_import_audit(project.project_key, "import.batch.retried", "import_batch", str(batch_id), {"new_batch_id": result.batch_id, "request_id": _request_id(request)})
         return {"data": result.__dict__ | {"retry_of": batch_id}, "request_id": _request_id(request)}
 
-    @router.post("/import-batches/{batch_id}:cancel")
+    @router.post(
+        "/import-batches/{batch_id}:cancel",
+        operation_id="cancel_import_batch_colon_alias",
+    )
     @router.post("/import-batches/{batch_id}/cancel")
     def cancel_import_batch(batch_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
         require_permission(current, "admin")
