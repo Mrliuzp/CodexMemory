@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from codex_memory.doctor import doctor_exit_code, run_doctor
+from codex_memory.doctor import _codex_home, doctor_exit_code, run_doctor
 
 
 def test_doctor_reports_disabled_project(tmp_path: Path) -> None:
@@ -31,6 +31,11 @@ def test_doctor_reports_enabled_project(tmp_path: Path) -> None:
     assert report["token_env"] == "ok"
     assert report["mcp_health"] == "ok"
     assert report["overall"] == "ok"
+
+
+def test_doctor_resolves_codex_home_from_windows_user_profile(tmp_path: Path) -> None:
+    assert _codex_home({"USERPROFILE": str(tmp_path)}) == tmp_path / ".codex"
+    assert _codex_home({"CODEX_HOME": str(tmp_path / "custom")}) == tmp_path / "custom"
 
 
 def test_doctor_reports_project_configuration_error(tmp_path: Path) -> None:

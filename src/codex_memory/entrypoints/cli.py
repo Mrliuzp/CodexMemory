@@ -27,6 +27,9 @@ def main() -> None:
 
     doctor = subparsers.add_parser("doctor", help="检查项目接入环境。")
     doctor.add_argument("--project-root", default=os.getcwd())
+    doctor.add_argument("--cwd")
+    doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--runtime-checks", action="store_true")
 
     hook_install = subparsers.add_parser("hook", help="管理 Codex Hook。")
     hook_install.add_argument("action", choices=["install", "uninstall"])
@@ -81,6 +84,16 @@ def main() -> None:
     subparsers.add_parser("health", help="检查 API 与数据库健康状态。")
 
     args = parser.parse_args()
+
+    if args.command == "doctor" and (args.cwd is not None or args.runtime_checks):
+        from ..doctor import doctor_exit_code, run_doctor
+
+        result = run_doctor(args.cwd or args.project_root, runtime_checks=args.runtime_checks)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        exit_code = doctor_exit_code(result)
+        if exit_code:
+            raise SystemExit(exit_code)
+        return
 
     if args.command in {"init", "status", "doctor", "hook"}:
         from .onboarding import doctor as run_doctor, health_check, install_hooks, resolve_project_key, save_config, save_credentials, status as read_status, uninstall_hooks

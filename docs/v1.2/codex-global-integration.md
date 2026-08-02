@@ -17,7 +17,7 @@ powershell -ExecutionPolicy Bypass -File scripts\set-codex-memory-token.ps1
 powershell -ExecutionPolicy Bypass -File scripts\install-codex-memory.ps1
 ```
 
-安装器会创建 `%USERPROFILE%\.codex\codex-memory-runtime`，先删除同名 `codex-memory` MCP，再以 `CODEX_MEMORY_MCP_TOKEN` 作为 Bearer Token 环境变量重新注册 HTTP MCP；同时安装 Skill 并合并本项目 Hook。Token 不会写入配置文件或命令行。
+安装器会从 `CODEX_HOME` 或 `%USERPROFILE%\.codex` 解析配置目录，并在用户级环境缺失时持久化 `CODEX_HOME`，避免 Windows 上 `HOME` 为空导致 Codex CLI 找不到 MCP 注册。随后创建 `codex-memory-runtime`，先删除同名 `codex-memory` MCP，再以 `CODEX_MEMORY_MCP_TOKEN` 作为 Bearer Token 环境变量重新注册 HTTP MCP；同时安装 Skill 并合并本项目 Hook。Token 不会写入配置文件或命令行。
 
 安装后重启 Codex，并验证注册信息：
 
@@ -44,6 +44,8 @@ CODEX_MEMORY_MCP_SERVER=codex-memory
 ```powershell
 codex-memory doctor --cwd "G:\Codex Project\20260703-codex-memory-system" --json
 ```
+
+需要同时检查运维状态时可追加 `--runtime-checks`，但必须将具备 `operations_read` 权限的 Token 配置为 `CODEX_MEMORY_API_TOKEN`；普通服务 Token 不具备该权限时会按安全策略返回 `403`。
 
 退出码：`0` 表示配置和 MCP 服务可用；`1` 表示可恢复警告，例如项目未启用；`2` 表示配置错误、Token 缺失或 MCP 服务不可用。
 

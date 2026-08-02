@@ -7,7 +7,20 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$CodexHome = Join-Path $HOME ".codex"
+$UserProfile = if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    $env:USERPROFILE
+} else {
+    [Environment]::GetFolderPath("UserProfile")
+}
+$CodexHome = if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
+    $env:CODEX_HOME
+} else {
+    Join-Path $UserProfile ".codex"
+}
+$env:CODEX_HOME = $CodexHome
+if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable("CODEX_HOME", "User"))) {
+    [Environment]::SetEnvironmentVariable("CODEX_HOME", $CodexHome, "User")
+}
 $Runtime = Join-Path $CodexHome "codex-memory-runtime"
 $SkillSource = Join-Path $RepoRoot "skills\codex-memory-auto-log"
 $SkillTarget = Join-Path $CodexHome "skills\codex-memory-auto-log"
@@ -54,23 +67,29 @@ if (-not (Test-Path -LiteralPath $CodexCli)) {
 }
 
 New-Item -ItemType Directory -Force -Path $CodexHome, (Join-Path $CodexHome "skills") | Out-Null
-$PythonLauncher = Get-Command py -ErrorAction SilentlyContinue
-$PythonExecutable = Get-Command python -ErrorAction SilentlyContinue
-if ($null -ne $PythonLauncher) {
-    & $PythonLauncher.Source -3 -m venv $Runtime
-} elseif ($null -ne $PythonExecutable) {
-    & $PythonExecutable.Source -m venv $Runtime
-} else {
-    throw "未找到 Python 解释器。请先安装 Python 3.10 或更高版本。"
+$RuntimePython = Join-Path $Runtime "Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $RuntimePython)) {
+    $PythonLauncher = Get-Command py -ErrorAction SilentlyContinue
+    $PythonExecutable = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -ne $PythonLauncher) {
+        & $PythonLauncher.Source -3 -m venv $Runtime
+    } elseif ($null -ne $PythonExecutable) {
+        & $PythonExecutable.Source -m venv $Runtime
+    } else {
+        throw "未找到 Python 解释器。请先安装 Python 3.10 或更高版本。"
+    }
+    if ($LASTEXITCODE -ne 0) { throw "创建 Codex Memory 运行环境失败" }
 }
-if ($LASTEXITCODE -ne 0) { throw "创建 Codex Memory 运行环境失败" }
-& (Join-Path $Runtime "Scripts\python.exe") -m pip install --upgrade $RepoRoot
+& $RuntimePython -m pip install --upgrade $RepoRoot
 if ($LASTEXITCODE -ne 0) { throw "安装 Codex Memory 运行环境依赖失败" }
 
 & $CodexCli mcp remove codex-memory 2>$null
 & $CodexCli mcp add codex-memory --url "http://127.0.0.1:8001/mcp" --bearer-token-env-var CODEX_MEMORY_MCP_TOKEN
 if ($LASTEXITCODE -ne 0) { throw "注册 Codex Memory MCP 失败" }
 
+if (Test-Path -LiteralPath $SkillTarget) {
+    Remove-Item -LiteralPath $SkillTarget -Recurse -Force
+}
 Copy-Item -LiteralPath $SkillSource -Destination $SkillTarget -Recurse -Force
 Merge-CodexMemoryHooks -TemplatePath $HooksTemplate -ConfigPath $HooksConfig
 Write-Host "Codex Memory 已安装。请重启 Codex 以加载 MCP、Skill 和 Hook。"

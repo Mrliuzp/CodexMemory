@@ -70,6 +70,7 @@ def test_env_example_uses_placeholders_not_real_tokens() -> None:
     assert "CODEX_MEMORY_DATABASE_URL=" in env_example
     assert "CODEX_MEMORY_SERVICE_TOKEN=change-me" in env_example
     assert "CODEX_MEMORY_MCP_TOKEN=change-me-mcp-token" in env_example
+    assert "`r`n" not in env_example
 
 
 def test_mcp_service_receives_independent_api_and_mcp_tokens() -> None:

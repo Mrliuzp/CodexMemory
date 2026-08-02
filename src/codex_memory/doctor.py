@@ -167,6 +167,16 @@ def _codex_cli_path(env: Mapping[str, str]) -> str | None:
     return shutil.which("codex.cmd") or shutil.which("codex")
 
 
+def _codex_home(env: Mapping[str, str]) -> Path:
+    configured = env.get("CODEX_HOME")
+    if configured:
+        return Path(configured)
+    user_profile = env.get("USERPROFILE")
+    if user_profile:
+        return Path(user_profile) / ".codex"
+    return Path.home() / ".codex"
+
+
 def _probe_codex_cli(env: Mapping[str, str]) -> str:
     return "ok" if _codex_cli_path(env) else "missing"
 
@@ -178,12 +188,15 @@ def _probe_mcp_registration(env: Mapping[str, str], server: str, cli_status: str
     if cli_path is None:
         return "missing"
     try:
+        process_env = dict(env)
+        process_env["CODEX_HOME"] = str(_codex_home(env))
         result = subprocess.run(
             [cli_path, "mcp", "get", server, "--json"],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
+            env=process_env,
         )
     except OSError:
         return "error"
@@ -191,7 +204,7 @@ def _probe_mcp_registration(env: Mapping[str, str], server: str, cli_status: str
 
 
 def _probe_skill(env: Mapping[str, str]) -> str:
-    codex_home = Path(env.get("CODEX_HOME", Path.home() / ".codex"))
+    codex_home = _codex_home(env)
     return "ok" if (codex_home / "skills" / "codex-memory-auto-log" / "SKILL.md").is_file() else "missing"
 
 

@@ -33,6 +33,13 @@ def test_installer_registers_http_mcp_without_embedding_token() -> None:
     assert "http://127.0.0.1:8001/mcp" in content
     assert "--bearer-token-env-var" in content
     assert "CODEX_MEMORY_MCP_TOKEN" in content
+    assert "$env:CODEX_HOME = $CodexHome" in content
+    assert 'SetEnvironmentVariable("CODEX_HOME", $CodexHome, "User")' in content
+    assert "$env:USERPROFILE" in content
+    assert "Join-Path $HOME" not in content
+    assert "if (-not (Test-Path -LiteralPath $RuntimePython))" in content
+    assert "& $RuntimePython -m pip install --upgrade $RepoRoot" in content
+    assert "Remove-Item -LiteralPath $SkillTarget -Recurse -Force" in content
     assert "Set-Content $CodexConfig" not in content
 
 

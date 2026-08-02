@@ -40,6 +40,31 @@ def test_cli_init_status_doctor_and_hook_lifecycle(tmp_path: Path, monkeypatch, 
     assert not hook_path.exists()
 
 
+def test_cli_doctor_supports_global_runtime_diagnostics(tmp_path: Path, monkeypatch, capsys) -> None:
+    from codex_memory import cli
+
+    monkeypatch.setattr(
+        "codex_memory.doctor.run_doctor",
+        lambda cwd, runtime_checks: {
+            "overall": "ok",
+            "project_id": "demo",
+            "runtime_checks": runtime_checks,
+            "cwd": str(cwd),
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["codex-memory", "doctor", "--cwd", str(tmp_path), "--json", "--runtime-checks"],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["overall"] == "ok"
+    assert output["runtime_checks"] is True
+    assert output["cwd"] == str(tmp_path)
+
+
 def test_cli_init_creates_project_and_credential_in_migrated_database(tmp_path: Path, monkeypatch, capsys) -> None:
     from codex_memory import cli
     from codex_memory.db import create_session_factory
