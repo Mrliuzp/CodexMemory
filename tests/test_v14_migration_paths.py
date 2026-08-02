@@ -96,3 +96,18 @@ def test_head_migration_repairs_historical_default_scope_name() -> None:
             {"project_id": project_id},
         )
     assert name == "默认 Scope"
+
+
+def test_head_migration_expands_audit_subject_id() -> None:
+    database_url, engine = _database_url_and_engine()
+    config = _alembic_config(database_url)
+
+    command.upgrade(config, "head")
+    command.downgrade(config, "0024_repair_scope_names")
+    before = next(column for column in inspect(engine).get_columns("audit_logs") if column["name"] == "subject_id")
+    assert before["type"].length == 100
+
+    command.upgrade(config, "head")
+
+    after = next(column for column in inspect(engine).get_columns("audit_logs") if column["name"] == "subject_id")
+    assert after["type"].length == 255

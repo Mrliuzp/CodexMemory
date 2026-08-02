@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import re
 
 
 _PART_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._:-]*$")
+_MAX_KEY_LENGTH = 255
+_HASH_LENGTH = 64
 
 
 def _normalise_part(value: str, field: str) -> str:
@@ -28,7 +31,13 @@ class IdempotencyKeyBuilder:
             _normalise_part(str(source_id), "source_id"),
             _normalise_part(version, "version"),
         )
-        return ".".join(parts)
+        key = ".".join(parts)
+        if len(key) <= _MAX_KEY_LENGTH:
+            return key
+
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        prefix_length = _MAX_KEY_LENGTH - _HASH_LENGTH - 1
+        return f"{key[:prefix_length]}.{digest}"
 
 
 def build_idempotency_key(project_key: str, operation: str, source_type: str, source_id: str | int, version: str) -> str:

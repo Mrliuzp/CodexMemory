@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class AppendV1Request(BaseModel):
     project_key: str
     session_key: str
-    event_key: str
+    event_key: str = Field(min_length=1, max_length=255)
     role: Literal["user", "assistant", "system"]
     content: str
     occurred_at: datetime | None = None

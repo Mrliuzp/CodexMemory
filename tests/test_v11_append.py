@@ -60,6 +60,49 @@ def test_append_returns_accepted_and_writes_l0_and_outbox() -> None:
         assert event.status == "pending"
 
 
+def test_append_accepts_max_length_event_key_and_writes_audit() -> None:
+    from codex_memory.db_models import AuditLogRow
+
+    client, factory = _client_and_factory()
+    event_key = "e" * 255
+    payload = {
+        "project_key": "erp",
+        "session_key": "s1",
+        "event_key": event_key,
+        "role": "assistant",
+        "content": "最终回复",
+    }
+
+    first = client.post("/api/v1/append", headers={"Authorization": "Bearer secret"}, json=payload)
+    second = client.post("/api/v1/append", headers={"Authorization": "Bearer secret"}, json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.json()["status"] == "duplicate"
+    with factory() as session:
+        audit = session.scalar(select(AuditLogRow).where(AuditLogRow.subject_id == event_key))
+        assert audit is not None
+        assert audit.event_type == "message_appended"
+
+
+def test_append_rejects_event_key_longer_than_database_contract() -> None:
+    client, _ = _client_and_factory()
+
+    response = client.post(
+        "/api/v1/append",
+        headers={"Authorization": "Bearer secret"},
+        json={
+            "project_key": "erp",
+            "session_key": "s1",
+            "event_key": "e" * 256,
+            "role": "assistant",
+            "content": "最终回复",
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_append_same_event_and_hash_is_duplicate() -> None:
     client, _ = _client_and_factory()
     headers = {"Authorization": "Bearer secret"}
