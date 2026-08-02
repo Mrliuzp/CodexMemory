@@ -424,7 +424,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
         expected_username = os.environ.get("CODEX_MEMORY_ADMIN_USERNAME", "admin")
         expected_password = os.environ.get("CODEX_MEMORY_ADMIN_PASSWORD", "")
         session_secret = os.environ.get("CODEX_MEMORY_ADMIN_SESSION_SECRET", "")
-        if expected_username.strip().lower() == "admin" or is_placeholder_value(expected_password) or is_placeholder_value(session_secret):
+        if is_placeholder_value(expected_password) or is_placeholder_value(session_secret):
             raise _error(request, "login_not_configured", "管理后台登录尚未配置", status.HTTP_503_SERVICE_UNAVAILABLE)
         if not (secrets.compare_digest(payload.username, expected_username) and secrets.compare_digest(payload.password, expected_password)):
             raise _error(request, "invalid_credentials", "用户名或密码错误", status.HTTP_401_UNAUTHORIZED)
