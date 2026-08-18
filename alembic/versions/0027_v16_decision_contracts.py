@@ -15,11 +15,17 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(bind: sa.Connection, table_name: str, column_name: str) -> bool:
+    return column_name in {column["name"] for column in sa.inspect(bind).get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        "project_feature_flags",
-        sa.Column("decision_engine_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
-    )
+    bind = op.get_bind()
+    if not _column_exists(bind, "project_feature_flags", "decision_engine_enabled"):
+        op.add_column(
+            "project_feature_flags",
+            sa.Column("decision_engine_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
+        )
 
     op.create_table(
         "project_decision_policies",
@@ -168,4 +174,6 @@ def downgrade() -> None:
     op.drop_index("ix_decision_runs_project_id", table_name="decision_runs")
     op.drop_table("decision_runs")
     op.drop_table("project_decision_policies")
-    op.drop_column("project_feature_flags", "decision_engine_enabled")
+    bind = op.get_bind()
+    if _column_exists(bind, "project_feature_flags", "decision_engine_enabled"):
+        op.drop_column("project_feature_flags", "decision_engine_enabled")

@@ -219,13 +219,17 @@ def test_append_outbox_worker_produces_candidate_after_explicit_pipeline_enablem
     with factory() as session:
         flags = session.get(ProjectFeatureFlagRow, project_id)
         candidate = session.scalar(select(MemoryCandidateRow))
-        event = session.scalar(select(OutboxEventRow))
+        event = session.scalar(select(OutboxEventRow).where(OutboxEventRow.event_type == "message.appended.v1"))
+        decision_event = session.scalar(
+            select(OutboxEventRow).where(OutboxEventRow.event_type == "candidate.decision.requested.v1")
+        )
         job = session.scalar(select(ProcessingJobRow))
         assert flags is not None and flags.memory_v11_enabled is True
         assert candidate is not None
         assert candidate.source_message_id == result.message_id
         assert candidate.status == "generated"
         assert event is not None and event.status == "completed"
+        assert decision_event is not None and decision_event.status == "pending"
         assert job is not None and job.status == "succeeded"
 
 def test_retryable_failure_backoffs_and_dead_jobs_stop_claiming() -> None:
