@@ -10,7 +10,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import String, cast, false, func, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..auth import PermissionDenied, ProjectAccessDenied, Principal, TokenAuthenticationError, authenticate_bearer, require_permission, require_project_access, issue_admin_session
 from ..db_models import AuditLogRow, MemoryRow, MessageRow, ProjectRow
-from ..v11_models import ImportBatchRow, ImportFileRow, ImportIssueRow, ImportUploadPartRow, MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, ReferenceCandidateRow, RetrievalAuditRow
+from ..v11_models import ImportBatchRow, ImportFileRow, ImportIssueRow, ImportUploadPartRow, MemoryCandidateRow, OutboxEventRow, ProcessingJobRow, ProjectFeatureFlagRow, ReferenceCandidateRow, RetrievalAuditRow
 from ..persistence.v14_models import TaskEventRow, TaskFileChangeRow, TaskReportRow, TaskRunRow
 from ..contract_revisions import ContractRevisionConflictError, ContractRevisionService
 from ..api_operations import OpenAPIContractError
@@ -288,6 +288,41 @@ class ImportReviewRequest(BaseModel):
 class AdminLoginRequest(BaseModel):
     username: str
     password: str
+
+
+class CandidateCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    reviewer: str
+    reason: str
+    replacement: dict[str, Any] | None = None
+
+
+class DecisionPolicyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_confidence: float | None = Field(default=None, ge=0, le=1)
+    enabled: bool | None = None
+    auto_publish_enabled: bool | None = None
+    strategy: str | None = None
+    updated_by: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class FeatureFlagsUpdateRequest(BaseModel):
+    """项目级运行开关；Codex CLI 全局开关不能从项目接口放宽。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memory_v11_enabled: bool | None = None
+    server_outbox_enabled: bool | None = None
+    lexical_retrieval_enabled: bool | None = None
+    dense_retrieval_enabled: bool | None = None
+    embedding_profile_v2_enabled: bool | None = None
+    llm_shadow_enabled: bool | None = None
+    candidate_publish_enabled: bool | None = None
+    async_pipeline_v13_enabled: bool | None = None
+    decision_engine_enabled: bool | None = None
 
 
 class TaskRunListItem(BaseModel):
@@ -565,6 +600,9 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     ) -> dict[str, Any]:
         resolved_project_key = project_key or (current.project_key if current.project_key != "*" else None)
         project_id = project_context(request, resolved_project_key, None, current, strict_access=True).id if resolved_project_key else None
+        from ..pipelines.v11_observability import DecisionObservabilityService
+
+        decision_metrics = DecisionObservabilityService(session_factory).snapshot(project_id)
         with session_factory() as session:
             inspector = inspect(session.bind)
             table_names = set(inspector.get_table_names())
@@ -598,7 +636,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
                 **counts,
                 "project_key": resolved_project_key,
                 "attention": {
-                    "pending_candidates": count_rows(MemoryCandidateRow, MemoryCandidateRow.status.in_(("generated", "pending", "pending_review"))),
+                    "pending_candidates": count_rows(MemoryCandidateRow, MemoryCandidateRow.status.in_(("generated", "pending", "pending_review", "needs_review"))),
                     "failed_jobs": count_rows(ProcessingJobRow, ProcessingJobRow.status == "failed"),
                     "dead_letters": count_rows(OutboxEventRow, OutboxEventRow.status == "dead"),
                     "active_imports": count_rows(ImportBatchRow, ImportBatchRow.status.notin_(("completed", "failed", "cancelled", "rolled_back"))),
@@ -615,7 +653,9 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
                     "l1": count_rows(MemoryRow, MemoryRow.level == "L1"),
                     "l2": count_rows(MemoryRow, MemoryRow.level == "L2"),
                     "l3": count_rows(MemoryRow, MemoryRow.level == "L3"),
+                    "decision_queue": decision_metrics["queued"],
                 },
+                "decision": decision_metrics,
                 "recent_audit_events": [
                     {
                         "id": row.id,
@@ -695,6 +735,118 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
                 or 0
             ) if inspect(session.bind).has_table("knowledge_scopes") else 0
         return {"data": {"id": project.id, "project_key": project.project_key, "name": project.name, "repository": project.repository, "description": project.description, "status": project.status, "scope_count": scope_count}, "request_id": _request_id(request)}
+
+    @router.get("/projects/{project_key}/decision-policy")
+    def get_decision_policy(project_key: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        project = project_context(request, project_key, None, current, strict_access=True)
+        from ..pipelines.v11_decision_policy import SqlDecisionPolicyProvider
+
+        return {
+            "data": {"project_id": project.id, "project_key": project.project_key, **SqlDecisionPolicyProvider(session_factory).get(project.id).as_dict()},
+            "request_id": _request_id(request),
+        }
+
+    @router.put("/projects/{project_key}/decision-policy")
+    def update_decision_policy(
+        project_key: str,
+        payload: DecisionPolicyUpdateRequest,
+        request: Request,
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
+        try:
+            require_permission(current, "admin")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        changes = payload.model_dump(exclude_none=True)
+        from ..pipelines.v11_decision_policy import SqlDecisionPolicyProvider
+
+        try:
+            policy = SqlDecisionPolicyProvider(session_factory).update(project.id, **changes)
+        except LookupError as error:
+            raise _error(request, "project_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+        except ValueError as error:
+            raise _error(request, "decision_policy_invalid", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        except RuntimeError as error:
+            raise _error(request, "decision_policy_unavailable", str(error), status.HTTP_503_SERVICE_UNAVAILABLE) from error
+        return {
+            "data": {"project_id": project.id, "project_key": project.project_key, **policy.as_dict()},
+            "request_id": _request_id(request),
+        }
+
+    def _feature_flags_payload(project_id: int) -> dict[str, Any]:
+        from ..codex_cli_runner import CodexCliSettings
+        from ..pipelines.v11_flags import DEFAULT_FEATURE_FLAG_VALUES
+
+        try:
+            with session_factory() as session:
+                row = session.get(ProjectFeatureFlagRow, project_id)
+                if row is None:
+                    values = dict(DEFAULT_FEATURE_FLAG_VALUES)
+                    initialized = False
+                else:
+                    values = {
+                        name: bool(getattr(row, name, False))
+                        for name in DEFAULT_FEATURE_FLAG_VALUES
+                    }
+                    initialized = True
+        except OperationalError:
+            values = dict(DEFAULT_FEATURE_FLAG_VALUES)
+            initialized = False
+            return {
+                "flags": values,
+                "initialized": False,
+                "storage_available": False,
+                "codex_cli_enabled": CodexCliSettings.from_env().enabled,
+            }
+        return {
+            "flags": values,
+            "initialized": initialized,
+            "storage_available": True,
+            "codex_cli_enabled": CodexCliSettings.from_env().enabled,
+        }
+
+    @router.get("/projects/{project_key}/feature-flags")
+    def get_feature_flags(project_key: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        project = project_context(request, project_key, None, current, strict_access=True)
+        return {
+            "data": {
+                "project_id": project.id,
+                "project_key": project.project_key,
+                **_feature_flags_payload(project.id),
+            },
+            "request_id": _request_id(request),
+        }
+
+    @router.put("/projects/{project_key}/feature-flags")
+    def update_feature_flags(
+        project_key: str,
+        payload: FeatureFlagsUpdateRequest,
+        request: Request,
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
+        try:
+            require_permission(current, "admin")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        changes = payload.model_dump(exclude_none=True)
+        if not changes:
+            raise _error(request, "feature_flags_empty", "至少需要一个功能开关变更", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        from ..pipelines.v11_flags import ProjectPolicyService
+
+        try:
+            ProjectPolicyService(session_factory).update_flags(project.id, **changes)
+        except ValueError as error:
+            raise _error(request, "feature_flags_invalid", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        return {
+            "data": {
+                "project_id": project.id,
+                "project_key": project.project_key,
+                **_feature_flags_payload(project.id),
+            },
+            "request_id": _request_id(request),
+        }
 
     @router.post("/contract-services")
     def create_contract_service(payload: ContractServiceCreateRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
@@ -949,7 +1101,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     ) -> dict[str, Any]:
         return query_list(
             MemoryCandidateRow,
-            lambda row: {"id": row.id, "project_id": row.project_id, "level": row.level, "scope": row.scope, "memory_type": row.memory_type, "title": row.title, "content": _redact(row.content), "status": row.status, "abstain": row.abstain, "model_confidence": row.model_confidence, "published_memory_id": row.published_memory_id, "created_at": _row_value(row, "created_at")},
+            lambda row: {"id": row.id, "project_id": row.project_id, "level": row.level, "scope": row.scope, "memory_type": row.memory_type, "title": row.title, "content": _redact(row.content), "status": row.status, "decision_queue_status": row.status, "abstain": row.abstain, "model": row.model, "model_confidence": row.model_confidence, "published_memory_id": row.published_memory_id, "created_at": _row_value(row, "created_at")},
             project_key,
             scope_id,
             request,
@@ -958,13 +1110,51 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             created_from=created_from,
             created_to=created_to,
             filters={
-                "status": ("generated", "pending", "pending_review") if status_filter == "pending" else status_filter,
+                "status": ("generated", "pending", "pending_review", "needs_review") if status_filter == "pending" else status_filter,
                 "level": level,
                 "memory_type": memory_type,
             },
             keyword=keyword,
             keyword_fields=("title", "content"),
         )
+
+    @router.post("/candidates/{candidate_id}/correction")
+    def correct_candidate(
+        candidate_id: int,
+        payload: CandidateCorrectionRequest,
+        request: Request,
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
+        try:
+            require_permission(current, "admin")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        from ..pipelines.v11_candidates import CandidatePolicyService
+
+        with session_factory() as session:
+            candidate = session.get(MemoryCandidateRow, candidate_id)
+            if candidate is None:
+                raise _error(request, "candidate_not_found", "候选记忆不存在", status.HTTP_404_NOT_FOUND)
+            project = session.get(ProjectRow, candidate.project_id)
+            if project is None:
+                raise _error(request, "project_not_found", "项目不存在", status.HTTP_404_NOT_FOUND)
+            try:
+                require_project_access(current, project.project_key)
+            except ProjectAccessDenied as error:
+                raise _error(request, "project_access_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        try:
+            result = CandidatePolicyService(session_factory).correct(
+                candidate_id,
+                action=payload.action,
+                reviewer=payload.reviewer,
+                reason=payload.reason,
+                replacement=payload.replacement,
+            )
+        except LookupError as error:
+            raise _error(request, "candidate_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+        except ValueError as error:
+            raise _error(request, "candidate_correction_invalid", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        return {"data": result, "request_id": _request_id(request)}
 
     @router.get("/memories")
     def memories(
@@ -1725,8 +1915,31 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             )
         return {"data": detail.model_dump(), "request_id": _request_id(request)}
 
+    @router.get("/decision-observability")
+    def decision_observability(
+        request: Request,
+        project_key: str | None = None,
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
+        try:
+            require_permission(current, "operations_read")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        resolved_project_key = project_key or (current.project_key if current.project_key != "*" else None)
+        project_id = project_context(request, resolved_project_key, None, current, strict_access=True).id if resolved_project_key else None
+        from ..pipelines.v11_observability import DecisionObservabilityService
+
+        return {
+            "data": DecisionObservabilityService(session_factory).snapshot(project_id),
+            "request_id": _request_id(request),
+        }
+
     @router.get("/system/status")
-    def system_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+    def system_status(
+        request: Request,
+        project_key: str | None = None,
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
         try:
             require_permission(current, "operations_read")
         except PermissionDenied as error:
@@ -1745,6 +1958,23 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             pending_jobs = 0
             outbox_pending = 0
             dead_letters = 0
+        from ..pipelines.v11_observability import DecisionObservabilityService
+
+        resolved_project_key = project_key or (current.project_key if current.project_key != "*" else None)
+        project_id = project_context(request, resolved_project_key, None, current, strict_access=True).id if resolved_project_key else None
+        try:
+            decision_metrics = DecisionObservabilityService(session_factory).snapshot(project_id)
+        except Exception:
+            decision_metrics = {
+                "queued": 0,
+                "human_review_queue": 0,
+                "model_failures": 0,
+                "retries": 0,
+                "auto_published": 0,
+                "human_overturned": 0,
+                "stuck_jobs": 0,
+                "feature_flags": {"auto_publish_l1_threshold": 0.8},
+            }
         return {
             "data": {
                 "database": db_ok,
@@ -1754,6 +1984,8 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
                 "pending_jobs": pending_jobs,
                 "server_outbox": outbox_pending,
                 "dead_letters": dead_letters,
+                "decision": decision_metrics,
+                "feature_flags": decision_metrics.get("feature_flags", {}),
             },
             "request_id": _request_id(request),
         }

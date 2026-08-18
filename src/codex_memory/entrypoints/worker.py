@@ -28,11 +28,16 @@ def run_once(session_factory: sessionmaker[Session]) -> dict[str, dict[str, int]
 
 
 def run_v11_once(session_factory: sessionmaker[Session], worker_id: str = "v11-worker") -> dict[str, int]:
-    dispatched = OutboxDispatcher(session_factory).dispatch_once(worker_id)
+    # 保留 V1.1 一次性兼容入口；决策事件交给 V1.3 Runtime 的
+    # CodexCliRunner adapter 消费，避免旧入口把禁用状态误报为成功。
+    dispatched = OutboxDispatcher(session_factory).dispatch_once(
+        worker_id,
+        exclude_event_types={"candidate.decision.requested.v1"},
+    )
     worker = V11JobWorker(session_factory)
     from .v11_handlers import V11JobHandlers
 
-    processed = worker.process_once(worker_id, V11JobHandlers(session_factory).handle)
+    processed = worker.process_once(worker_id, V11JobHandlers(session_factory))
     return {"dispatched": dispatched, **processed}
 
 

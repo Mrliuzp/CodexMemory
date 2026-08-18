@@ -26,6 +26,7 @@ let loadSequence = 0
 const canReadSystem = computed(() => session.isAdmin || session.hasPermission('operations_read'))
 const queryContext = computed(() => ({ ...(route.query.project_key ? { project_key: route.query.project_key } : {}) }))
 const attention = computed(() => dashboard.value.attention || {})
+const decision = computed(() => dashboard.value.decision || {})
 const pipeline = computed(() => dashboard.value.pipeline || {})
 const levelCounts = computed(() => pipeline.value.memories_by_level || pipeline.value.levels || {})
 
@@ -53,6 +54,10 @@ const attentionCards = computed(() => [
   { key: 'active_imports', label: '活跃导入', value: attention.value.active_imports ?? 0, tone: 'primary', to: '/imports', query: { status: 'active' }, hint: '跟踪上传与处理进度' },
   { key: 'uncertain_task_runs', label: '不确定 TaskRun', value: attention.value.uncertain_task_runs ?? 0, tone: 'warning', to: '/task-runs', query: { uncertain: 'true' }, hint: '核对归因与验证证据' },
   { key: 'proposed_revisions', label: '待发布 Revision', value: attention.value.proposed_revisions ?? 0, tone: 'primary', to: '/contract-services', query: { status: 'proposed' }, hint: '校验通过后再发布' },
+  { key: 'decision_queue', label: '候选决策队列', value: decision.value.queued ?? 0, tone: 'primary', to: '/records', query: { kind: 'jobs', status: 'pending', job_type: 'decide_candidate' }, hint: '等待模型建议与服务器策略门' },
+  { key: 'model_failures', label: '模型失败', value: decision.value.model_failures ?? 0, tone: 'danger', to: '/records', query: { kind: 'audit-events', type: 'candidate_model_failed' }, hint: '失败会退避，耗尽后进入人工队列' },
+  { key: 'human_review_queue', label: '人工决策队列', value: decision.value.human_review_queue ?? 0, tone: 'warning', to: '/records', query: { kind: 'candidates', status: 'needs_review' }, hint: '人工只能纠错或创建替代版本' },
+  { key: 'stuck_jobs', label: '卡死任务', value: decision.value.stuck_jobs ?? 0, tone: 'danger', to: '/records', query: { kind: 'jobs', status: 'running' }, hint: '租约或心跳超过阈值的任务' },
 ])
 
 async function load({ manual = false } = {}) {
@@ -64,7 +69,7 @@ async function load({ manual = false } = {}) {
   const requests = [
     adminGet('/dashboard', queryContext.value),
     adminGet('/audit-events', { ...queryContext.value, page: 1, page_size: 6, sort: 'created_at', order: 'desc' }),
-    canReadSystem.value ? adminGet('/system/status') : Promise.resolve({ data: {} }),
+    canReadSystem.value ? adminGet('/system/status', queryContext.value) : Promise.resolve({ data: {} }),
   ]
   const [dashboardResult, auditResult, systemResult] = await Promise.allSettled(requests)
   if (sequence !== loadSequence) return

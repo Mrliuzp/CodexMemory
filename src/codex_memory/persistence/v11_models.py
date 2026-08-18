@@ -35,6 +35,7 @@ class ProjectFeatureFlagRow(V11TimestampedRow, V11Base):
     llm_shadow_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     candidate_publish_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     async_pipeline_v13_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    decision_engine_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
 
 
 class ProjectProcessingPolicyRow(V11TimestampedRow, V11Base):

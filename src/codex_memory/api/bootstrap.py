@@ -9,6 +9,7 @@ from .auth import hash_token
 from .config import Settings
 from .db import create_engine_from_url, create_session_factory
 from .db_models import ApiKeyRow, ProjectRow
+from .v11_flags import ensure_project_feature_flags
 
 
 BOOTSTRAP_PERMISSIONS = ["append", "read", "memory_write", "contract_write"]
@@ -32,6 +33,7 @@ def ensure_bootstrap(
             project = ProjectRow(project_key=project_key, name=project_name or project_key)
             session.add(project)
             session.flush()
+        ensure_project_feature_flags(session, project.id)
 
         existing = session.scalar(select(ApiKeyRow).where(ApiKeyRow.token_hash == token_hash))
         if existing is not None:
@@ -43,7 +45,7 @@ def ensure_bootstrap(
             ]
             if merged_permissions != current_permissions:
                 existing.permissions = merged_permissions
-                session.commit()
+            session.commit()
             return
 
         session.add(
