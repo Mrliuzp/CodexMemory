@@ -4,7 +4,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect, select, text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +99,7 @@ def test_v11_models_are_additive_and_postgresql_compatible() -> None:
         assert flags.embedding_profile_v2_enabled is False
         assert flags.llm_shadow_enabled is False
         assert flags.candidate_publish_enabled is False
+        assert flags.decision_engine_enabled is False
         assert policy is not None
         assert policy.remote_embedding_allowed is False
         assert policy.remote_llm_allowed is False
@@ -140,6 +141,59 @@ def test_v11_migrations_upgrade_postgresql_and_keep_legacy_embedding_table() -> 
     assert "memory_embeddings" in set(downgraded.get_table_names())
     assert not (EXPECTED_V11_TABLES & set(downgraded.get_table_names()))
     assert {"messages", "memories", "memory_relations"} <= set(downgraded.get_table_names())
+
+
+def test_feature_flag_migration_backfills_existing_projects() -> None:
+    from codex_memory.db import create_postgres_test_engine
+
+    engine = create_postgres_test_engine()
+    database_url = engine.url.render_as_string(hide_password=False)
+    command.upgrade(_alembic_config(database_url), "0024_repair_scope_names")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO projects (project_key, name, status) VALUES "
+                "(:legacy_key, :legacy_name, :status), (:configured_key, :configured_name, :status)"
+            ),
+            {
+                "legacy_key": "legacy",
+                "legacy_name": "Legacy",
+                "configured_key": "configured",
+                "configured_name": "Configured",
+                "status": "active",
+            },
+        )
+        configured_id = connection.execute(
+            text("SELECT id FROM projects WHERE project_key = :project_key"),
+            {"project_key": "configured"},
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO project_feature_flags (project_id, memory_v11_enabled) "
+                "VALUES (:project_id, TRUE)"
+            ),
+            {"project_id": configured_id},
+        )
+
+    command.upgrade(_alembic_config(database_url), "head")
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT project_key, memory_v11_enabled, server_outbox_enabled, lexical_retrieval_enabled, "
+                "dense_retrieval_enabled, embedding_profile_v2_enabled, llm_shadow_enabled, "
+                "candidate_publish_enabled, async_pipeline_v13_enabled "
+                "FROM project_feature_flags JOIN projects ON projects.id = project_feature_flags.project_id "
+                "ORDER BY project_key"
+            ),
+        ).mappings().all()
+
+    assert len(rows) == 2
+    configured = rows[0]
+    legacy = rows[1]
+    assert configured["project_key"] == "configured"
+    assert configured["memory_v11_enabled"] is True
+    assert legacy["project_key"] == "legacy"
+    assert all(value is False for key, value in legacy.items() if key != "project_key")
 
 
 def test_v11_flag_models_expose_server_defaults() -> None:

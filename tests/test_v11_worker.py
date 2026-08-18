@@ -141,6 +141,93 @@ def test_v11_worker_processes_message_append_into_idempotent_candidate() -> None
     with factory() as session:
         assert len(session.scalars(select(MemoryCandidateRow)).all()) == 1
 
+
+def test_append_to_candidate_pipeline_initializes_missing_flags_as_observable_failure() -> None:
+    from codex_memory.auth import Principal
+    from codex_memory.db_models import (
+        MemoryCandidateRow,
+        OutboxEventRow,
+        ProcessingJobRow,
+        ProjectFeatureFlagRow,
+        SecurityAuditRow,
+    )
+    from codex_memory.v1_service import V1MemoryService
+    from codex_memory.worker import run_v11_once
+
+    factory = _factory_with_outbox()
+    result = V1MemoryService(factory).append_message_v11(
+        Principal(project_key="erp", permissions=frozenset({"append"})),
+        "erp",
+        "s1",
+        "s1:t1:user",
+        "user",
+        "Use OrderService.",
+    )
+    assert result.status == "accepted"
+
+    processed = run_v11_once(factory, "worker-a")
+    assert processed == {"dispatched": 1, "claimed": 1, "completed": 0, "retry_wait": 0, "dead": 1}
+
+    with factory() as session:
+        flags = session.scalar(select(ProjectFeatureFlagRow))
+        job = session.scalar(select(ProcessingJobRow))
+        event = session.scalar(select(OutboxEventRow))
+        audit = session.scalar(
+            select(SecurityAuditRow).where(SecurityAuditRow.event_type == "feature_flags_auto_initialized")
+        )
+        assert flags is not None
+        assert flags.memory_v11_enabled is False
+        assert job is not None and job.status == "dead"
+        assert job.last_error_message is not None and "自动补齐" in job.last_error_message
+        assert event is not None and event.status == "dead"
+        assert audit is not None
+        assert session.scalar(select(MemoryCandidateRow)) is None
+
+
+def test_append_outbox_worker_produces_candidate_after_explicit_pipeline_enablement() -> None:
+    from codex_memory.auth import Principal
+    from codex_memory.db_models import MemoryCandidateRow, ProjectFeatureFlagRow, ProjectRow, OutboxEventRow, ProcessingJobRow
+    from codex_memory.v1_service import V1MemoryService
+    from codex_memory.v11_flags import ProjectPolicyService
+    from codex_memory.worker import run_v11_once
+
+    factory = _factory_with_outbox()
+    with factory() as session:
+        project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == "erp"))
+        project_id = project.id
+
+    ProjectPolicyService(factory).update_flags(
+        project_id,
+        memory_v11_enabled=True,
+        server_outbox_enabled=True,
+    )
+    result = V1MemoryService(factory).append_message_v11(
+        Principal(project_key="erp", permissions=frozenset({"append"})),
+        "erp",
+        "s1",
+        "s1:t2:user",
+        "user",
+        "Use OrderService for order updates.",
+    )
+    assert result.status == "accepted"
+
+    first = run_v11_once(factory, "worker-a")
+    second = run_v11_once(factory, "worker-b")
+    assert first == {"dispatched": 1, "claimed": 1, "completed": 1, "retry_wait": 0, "dead": 0}
+    assert second == {"dispatched": 0, "claimed": 0, "completed": 0, "retry_wait": 0, "dead": 0}
+
+    with factory() as session:
+        flags = session.get(ProjectFeatureFlagRow, project_id)
+        candidate = session.scalar(select(MemoryCandidateRow))
+        event = session.scalar(select(OutboxEventRow))
+        job = session.scalar(select(ProcessingJobRow))
+        assert flags is not None and flags.memory_v11_enabled is True
+        assert candidate is not None
+        assert candidate.source_message_id == result.message_id
+        assert candidate.status == "generated"
+        assert event is not None and event.status == "completed"
+        assert job is not None and job.status == "succeeded"
+
 def test_retryable_failure_backoffs_and_dead_jobs_stop_claiming() -> None:
     from codex_memory.db_models import OutboxEventRow, ProcessingJobRow, ProjectRow
     from codex_memory.v11_worker import OutboxDispatcher, V11JobWorker

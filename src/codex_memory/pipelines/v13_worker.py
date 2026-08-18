@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .db_models import WorkerInstanceRow
+from .v11_decision import CandidateDecisionModel
 from .v11_handlers import V11JobHandlers
 from .v11_worker import OutboxDispatcher, V11JobWorker
 
@@ -53,6 +54,9 @@ class WorkerRuntime:
         poll_interval_seconds: float = 2.0,
         reflection_runner: Callable[[], object] | None = None,
         reflection_delay_seconds: float | None = None,
+        candidate_decision_model: CandidateDecisionModel | None = None,
+        codex_cli_runner: object | None = None,
+        auto_publish_threshold: float | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.worker_id = worker_id
@@ -63,7 +67,12 @@ class WorkerRuntime:
         self.reflection_delay_seconds = reflection_delay_seconds
         self.dispatcher = OutboxDispatcher(session_factory, lease_seconds=lease_seconds)
         self.job_worker = V11JobWorker(session_factory, lease_seconds=lease_seconds)
-        self.handlers = V11JobHandlers(session_factory)
+        self.handlers = V11JobHandlers(
+            session_factory,
+            candidate_decision_model=candidate_decision_model,
+            codex_cli_runner=codex_cli_runner,
+            auto_publish_threshold=auto_publish_threshold,
+        )
         self.stop_requested = Event()
         self._reflection_due_at: float | None = None
 

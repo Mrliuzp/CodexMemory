@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .db_models import (
@@ -21,7 +22,46 @@ _FLAG_NAMES = {
     "llm_shadow_enabled",
     "candidate_publish_enabled",
     "async_pipeline_v13_enabled",
+    "decision_engine_enabled",
 }
+
+
+DEFAULT_FEATURE_FLAG_VALUES: dict[str, bool] = {
+    "memory_v11_enabled": False,
+    "server_outbox_enabled": False,
+    "lexical_retrieval_enabled": False,
+    "dense_retrieval_enabled": False,
+    "embedding_profile_v2_enabled": False,
+    "llm_shadow_enabled": False,
+    "candidate_publish_enabled": False,
+    "async_pipeline_v13_enabled": False,
+    "decision_engine_enabled": False,
+}
+
+
+def ensure_project_feature_flags(
+    session: Session,
+    project_id: int,
+) -> tuple[ProjectFeatureFlagRow, bool]:
+    """确保项目有一条明确的默认功能开关记录。"""
+    flags = session.get(ProjectFeatureFlagRow, project_id)
+    if flags is not None:
+        return flags, False
+
+    flags = ProjectFeatureFlagRow(
+        project_id=project_id,
+        **DEFAULT_FEATURE_FLAG_VALUES,
+    )
+    session.add(flags)
+    try:
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        flags = session.get(ProjectFeatureFlagRow, project_id)
+        if flags is None:
+            raise
+        return flags, False
+    return flags, True
 
 
 class ProjectPolicyService:
@@ -30,10 +70,8 @@ class ProjectPolicyService:
 
     def get_flags(self, project_id: int) -> ProjectFeatureFlagRow:
         with self.session_factory() as session:
-            flags = session.get(ProjectFeatureFlagRow, project_id)
-            if flags is None:
-                flags = ProjectFeatureFlagRow(project_id=project_id)
-                session.add(flags)
+            flags, created = ensure_project_feature_flags(session, project_id)
+            if created:
                 session.commit()
             return flags
 
@@ -42,12 +80,10 @@ class ProjectPolicyService:
         if unknown:
             raise ValueError(f"未知功能开关（unknown flag）：{sorted(unknown)[0]}")
         with self.session_factory() as session:
-            flags = session.get(ProjectFeatureFlagRow, project_id)
-            if flags is None:
-                flags = ProjectFeatureFlagRow(project_id=project_id)
-                session.add(flags)
-                session.flush()
+            flags, _ = ensure_project_feature_flags(session, project_id)
             for name, value in changes.items():
+                if not isinstance(value, bool):
+                    raise ValueError(f"功能开关 {name} 必须是布尔值")
                 setattr(flags, name, bool(value))
             session.add(
                 SecurityAuditRow(

@@ -7,11 +7,12 @@ from sqlalchemy import select
 
 def _factory():
     from codex_memory.db import create_schema, create_session_factory, create_postgres_test_engine
-    from codex_memory.db_models import V11Base
+    from codex_memory.db_models import V11Base, V16Base
 
     engine = create_postgres_test_engine()
     create_schema(engine)
     V11Base.metadata.create_all(engine)
+    V16Base.metadata.create_all(engine)
     return create_session_factory(engine)
 
 
@@ -64,14 +65,20 @@ def test_v13_once_consumes_new_action_job_and_completes_outbox() -> None:
 
     assert first["dispatched"] == 1
     assert first["completed"] == 1
-    assert second["dispatched"] == 0
-    assert second["claimed"] == 0
+    assert second["dispatched"] == 1
+    assert second["claimed"] == 1
+    assert second["completed"] == 0
+    assert second["dead"] == 1
     with factory() as session:
-        event = session.scalar(select(OutboxEventRow))
-        job = session.scalar(select(ProcessingJobRow))
-        assert event.status == "completed"
-        assert job.job_type == "extract_memory_candidate"
-        assert job.idempotency_key is not None
+        events = session.scalars(select(OutboxEventRow).order_by(OutboxEventRow.id)).all()
+        jobs = session.scalars(select(ProcessingJobRow).order_by(ProcessingJobRow.id)).all()
+        assert events[0].status == "completed"
+        assert events[1].status == "dead"
+        assert jobs[0].job_type == "extract_memory_candidate"
+        assert jobs[0].idempotency_key is not None
+        assert jobs[1].job_type == "decide_candidate"
+        assert jobs[1].last_error_code == "decision_engine_disabled"
+        assert session.scalar(select(MemoryCandidateRow)).status == "needs_review"
         assert len(session.scalars(select(MemoryCandidateRow)).all()) == 1
 
 

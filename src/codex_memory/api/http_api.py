@@ -221,7 +221,7 @@ def create_v1_app(session_factory: Any) -> FastAPI:
             flags = ProjectPolicyService(session_factory).update_flags(project.id, **payload)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        return {"project_id": project.id, "flags": {name: getattr(flags, name) for name in (
+        flag_names = [
             "memory_v11_enabled",
             "server_outbox_enabled",
             "lexical_retrieval_enabled",
@@ -230,7 +230,41 @@ def create_v1_app(session_factory: Any) -> FastAPI:
             "llm_shadow_enabled",
             "candidate_publish_enabled",
             "async_pipeline_v13_enabled",
-        )}}
+            "decision_engine_enabled",
+        ]
+        return {"project_id": project.id, "flags": {name: getattr(flags, name) for name in flag_names}}
+
+    @app.get("/api/v1/admin/projects/{project_key}/decision-policy")
+    def get_decision_policy(project_key: str, principal: Any = Depends(current_principal)) -> dict[str, Any]:
+        enforce(principal, project_key, "read")
+        from sqlalchemy import select
+        from .db_models import ProjectRow
+        from ..pipelines.v11_decision_policy import SqlDecisionPolicyProvider
+
+        with session_factory() as session:
+            project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
+        if project is None:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        return {"project_id": project.id, "project_key": project.project_key, **SqlDecisionPolicyProvider(session_factory).get(project.id).as_dict()}
+
+    @app.post("/api/v1/admin/projects/{project_key}/decision-policy")
+    def update_decision_policy(project_key: str, payload: dict[str, Any], principal: Any = Depends(current_principal)) -> dict[str, Any]:
+        enforce(principal, project_key, "admin")
+        from sqlalchemy import select
+        from .db_models import ProjectRow
+        from ..pipelines.v11_decision_policy import SqlDecisionPolicyProvider
+
+        with session_factory() as session:
+            project = session.scalar(select(ProjectRow).where(ProjectRow.project_key == project_key))
+        if project is None:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        try:
+            policy = SqlDecisionPolicyProvider(session_factory).update(project.id, **payload)
+        except (LookupError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        return {"project_id": project.id, "project_key": project.project_key, **policy.as_dict()}
 
     @app.post("/api/v1/admin/profiles")
     def create_profile(payload: dict[str, Any], principal: Any = Depends(current_principal)) -> dict[str, Any]:

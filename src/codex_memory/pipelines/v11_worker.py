@@ -43,17 +43,26 @@ class OutboxDispatcher:
         self.lease_seconds = lease_seconds
         self.now = now or _utcnow
 
-    def dispatch_once(self, worker_id: str, limit: int = 10) -> int:
+    def dispatch_once(
+        self,
+        worker_id: str,
+        limit: int = 10,
+        *,
+        exclude_event_types: set[str] | None = None,
+    ) -> int:
         now = self.now()
         dispatched = 0
         with self.session_factory() as session:
+            conditions = [
+                OutboxEventRow.status.in_(["pending", "retry_wait"]),
+                OutboxEventRow.next_attempt_at <= now,
+                or_(OutboxEventRow.lease_expires_at.is_(None), OutboxEventRow.lease_expires_at <= now),
+            ]
+            if exclude_event_types:
+                conditions.append(~OutboxEventRow.event_type.in_(exclude_event_types))
             query = (
                 select(OutboxEventRow)
-                .where(
-                    OutboxEventRow.status.in_([ "pending", "retry_wait" ]),
-                    OutboxEventRow.next_attempt_at <= now,
-                    or_(OutboxEventRow.lease_expires_at.is_(None), OutboxEventRow.lease_expires_at <= now),
-                )
+                .where(*conditions)
                 .order_by(
                     OutboxEventRow.priority.desc(),
                     OutboxEventRow.created_at,
@@ -125,6 +134,9 @@ class OutboxDispatcher:
         elif event.event_type == "candidate.accepted.v1":
             operation = "publish_memory"
             handler_version = "publish-v1"
+        elif event.event_type == "candidate.decision.requested.v1":
+            operation = "decide_candidate"
+            handler_version = "candidate-decision-v1"
         elif event.event_type == "reflection.requested.v1":
             operation = "reflect_project"
             handler_version = "reflection-v1"
@@ -309,6 +321,7 @@ class V11JobWorker:
                     retryable=False,
                 )
                 if state == "dead":
+                    self._notify_dead(handler, claim, error)
                     dead += 1
                 continue
             except Exception as error:
@@ -325,6 +338,7 @@ class V11JobWorker:
                 if state == "retry_wait":
                     retry_wait += 1
                 elif state == "dead":
+                    self._notify_dead(handler, claim, error)
                     dead += 1
                 continue
             if self.complete(claim.job_id, worker_id):
@@ -335,6 +349,20 @@ class V11JobWorker:
             "retry_wait": retry_wait,
             "dead": dead,
         }
+
+    @staticmethod
+    def _notify_dead(handler: object, claim: JobClaim, error: Exception) -> None:
+        """让特定 Handler 在死信时完成业务降级，不能改变 Job 的 dead 结果。"""
+
+        callback = getattr(handler, "on_dead", None)
+        if callback is None:
+            return
+        try:
+            callback(claim, error)
+        except Exception:
+            # 降级回调失败时保留原始死信状态，避免把 Worker 伪装成成功。
+            return
+
     def sweep_expired(self) -> int:
         now = self.now()
         recovered = 0
