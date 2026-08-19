@@ -8,6 +8,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+      args:
+        HTTP_PROXY: ${CODEX_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${CODEX_BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${CODEX_BUILD_NO_PROXY:-}
     environment:
       # Still false unless explicitly enabled in a separately reviewed rollout.
       CODEX_MEMORY_CODEX_CLI_ENABLED: ${CODEX_MEMORY_CODEX_CLI_ENABLED:-false}

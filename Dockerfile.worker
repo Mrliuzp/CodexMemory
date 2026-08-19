@@ -3,21 +3,31 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/root/.local/bin:${PATH}"
 
-ARG CODEX_CLI_VERSION=0.146.0
+# These are build-only inputs. They are intentionally not promoted to ENV so
+# proxy credentials/endpoints cannot become part of the Worker runtime image.
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
 
 WORKDIR /app
 
 # The Worker image is the only image that contains Codex CLI. The API and MCP
 # images remain unable to execute it, and the runner stays disabled by default.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates nodejs npm \
-    && npm install --global "@openai/codex@${CODEX_CLI_VERSION}" \
+    && apt-get install -y --no-install-recommends ca-certificates curl coreutils \
+    && install_root="$(mktemp -d)" \
+    && export HTTP_PROXY HTTPS_PROXY NO_PROXY \
+    && curl --fail --show-error --location --retry 5 --retry-all-errors --connect-timeout 15 --max-time 120 --progress-bar \
+        https://chatgpt.com/codex/install.sh --output "$install_root/install.sh" \
+    && grep --extended-regexp --ignore-case --quiet 'sha256|sha256sum|shasum' "$install_root/install.sh" \
+    && echo 'Official Codex installer downloaded; SHA-256 verification path detected.' \
+    && timeout 20m sh -c 'sh "$1" & installer_pid=$!; while kill -0 "$installer_pid" 2>/dev/null; do echo "Official Codex installer still running"; sleep 15; done; wait "$installer_pid"' sh "$install_root/install.sh" \
     && command -v codex \
     && codex --version \
-    && npm cache clean --force \
+    && rm -rf "$install_root" \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . /app
-RUN pip install --no-cache-dir .
+RUN unset HTTP_PROXY HTTPS_PROXY NO_PROXY && pip install --no-cache-dir .
 
 CMD ["python", "-m", "codex_memory.worker", "--mode", "async", "--poll-interval", "2", "--reflection-schedule", "02:00"]

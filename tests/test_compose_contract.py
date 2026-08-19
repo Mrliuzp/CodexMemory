@@ -111,6 +111,14 @@ def test_codex_auth_override_is_worker_only_and_read_only() -> None:
     worker = services["worker"]
     assert worker["environment"]["CODEX_MEMORY_CODEX_CLI_ENABLED"].endswith(":-false}")
     assert worker["environment"]["CODEX_MEMORY_CODEX_CLI_AUTH_ROOT"] == "/run/codex-memory-codex-auth"
+    assert worker["build"]["args"] == {
+        "HTTP_PROXY": "${CODEX_BUILD_HTTP_PROXY:-}",
+        "HTTPS_PROXY": "${CODEX_BUILD_HTTPS_PROXY:-}",
+        "NO_PROXY": "${CODEX_BUILD_NO_PROXY:-}",
+    }
+    assert "HTTP_PROXY" not in worker["environment"]
+    assert "HTTPS_PROXY" not in worker["environment"]
+    assert "NO_PROXY" not in worker["environment"]
     auth_mount = next(item for item in worker["volumes"] if item.get("target") == "/run/codex-memory-codex-auth")
     assert auth_mount["read_only"] is True
     assert "CODEX_MEMORY_CODEX_CLI_AUTH_DIR" in auth_mount["source"]

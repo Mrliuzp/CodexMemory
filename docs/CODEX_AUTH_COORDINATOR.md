@@ -36,6 +36,8 @@ python -m codex_memory.codex_auth `
 
 使用认证挂载时，Compose 必须额外加载 `docker-compose.codex-auth.yml`，并在同一受控部署环境中提供 `CODEX_MEMORY_CODEX_CLI_AUTH_DIR`。该 override 只给 Worker 安装 CLI，并把认证根目录 `read_only: true` 挂载；API 只获得协调器 URL/token，不获得认证目录挂载。
 
+Worker 镜像使用官方 `https://chatgpt.com/codex/install.sh`。构建网络若需要代理，只在构建命令环境中提供 `CODEX_BUILD_HTTP_PROXY`、`CODEX_BUILD_HTTPS_PROXY`、`CODEX_BUILD_NO_PROXY`；override 将它们映射为 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` build args。当前 Windows 主机代理必须使用 Docker 可达的 `host.docker.internal` 地址，不能直接使用构建器内部不可达的 `127.0.0.1`。这些 args 不进入 Worker runtime ENV，安装步骤具有进度、重试、超时，并要求官方脚本包含 SHA-256 校验路径。
+
 ## 管理后台
 
 登录管理员后打开“运行监控 → 系统状态”。“Codex CLI 登录状态”卡片只显示：已登录、未登录、登录进行中或错误。管理员可点击“开始登录/更换账号”“取消”“重新检查”；只读用户只能看到状态。按钮调用 Admin API，API 再调用协调器，不读认证文件。
