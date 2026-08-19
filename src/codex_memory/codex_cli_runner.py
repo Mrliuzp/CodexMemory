@@ -35,6 +35,7 @@ _TOKEN_BYTES = 4
 _ACTIVE_GENERATION_FILE = ".active-generation"
 _ROOT_GENERATION = "root"
 _DISABLED_GENERATION = "disabled"
+_AUTH_FILE_NAME = "auth.json"
 
 
 def _utc_today() -> date:
@@ -790,7 +791,12 @@ def _isolate_environment(environment: Mapping[str, str], root: Path) -> dict[str
             raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录指针越界")
         if not selected_resolved.is_dir():
             raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录不可用")
-        codex_home = str(selected_resolved)
+        _link_readonly_auth_file(selected_resolved, isolated_codex_home)
+        # Current Codex CLI releases write transient server/session state under
+        # CODEX_HOME even for --ephemeral. Keep that state in the per-call
+        # temporary directory while the credential bytes remain on the
+        # coordinator-owned read-only mount via the symlink above.
+        codex_home = str(isolated_codex_home)
     else:
         codex_home = str(isolated_codex_home)
     safe.update(
@@ -808,6 +814,18 @@ def _isolate_environment(environment: Mapping[str, str], root: Path) -> dict[str
         }
     )
     return safe
+
+
+def _link_readonly_auth_file(source_home: Path, runtime_home: Path) -> None:
+    """Expose only the coordinator-owned auth file without copying it."""
+
+    source = source_home / _AUTH_FILE_NAME
+    if not source.is_file():
+        raise CodexCliAuthenticationError("Worker 专用 Codex 认证文件不可用")
+    try:
+        (runtime_home / _AUTH_FILE_NAME).symlink_to(source)
+    except (OSError, NotImplementedError) as error:
+        raise CodexCliAuthenticationError("Worker 专用 Codex 认证链接不可用") from error
 
 
 def _is_authentication_failure(text: str) -> bool:

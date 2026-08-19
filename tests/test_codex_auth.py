@@ -62,10 +62,18 @@ class FakeProcess:
         return self.returncode or 0
 
 
-def test_runner_uses_active_generation_but_keeps_work_and_sqlite_state_temporary(tmp_path: Path) -> None:
+def test_runner_uses_active_generation_but_keeps_work_and_sqlite_state_temporary(tmp_path: Path, monkeypatch) -> None:
     auth_root = tmp_path / "worker-auth"
     auth_root.mkdir()
     (auth_root / ACTIVE_GENERATION_FILE).write_text("root\n", encoding="ascii")
+    (auth_root / "auth.json").write_text("credential-placeholder-not-read", encoding="utf-8")
+    linked = {}
+
+    def fake_link(source: Path, runtime_home: Path) -> None:
+        linked["source"] = source
+        linked["runtime_home"] = runtime_home
+
+    monkeypatch.setattr("codex_memory.codex_cli_runner._link_readonly_auth_file", fake_link)
 
     class FakeRunner:
         def __init__(self) -> None:
@@ -85,8 +93,10 @@ def test_runner_uses_active_generation_but_keeps_work_and_sqlite_state_temporary
 
     invocation = fake.invocations[0]
     assert result.data == {"decision": "keep"}
-    assert invocation.env["CODEX_HOME"] == str(auth_root.resolve())
+    assert Path(invocation.env["CODEX_HOME"]) == linked["runtime_home"]
+    assert linked["source"] == auth_root.resolve()
     assert Path(invocation.env["CODEX_SQLITE_HOME"]) != auth_root.resolve()
+    assert Path(invocation.env["CODEX_SQLITE_HOME"]) != Path(invocation.env["CODEX_HOME"])
     assert invocation.cwd != auth_root.resolve()
     assert "--sandbox" in invocation.argv
     assert invocation.argv[invocation.argv.index("--sandbox") + 1] == "read-only"
