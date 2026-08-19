@@ -119,7 +119,9 @@ def test_cli_argv_is_fixed_array_and_untrusted_context_stays_on_stdin() -> None:
     invocation = fake.invocations[0]
     assert malicious in invocation.stdin.decode("utf-8")
     assert malicious not in invocation.argv
-    assert invocation.argv[-1] == "-"
+    assert "-" not in invocation.argv
+    assert invocation.argv[1:3] == ("--ask-for-approval", "never")
+    assert invocation.argv[3] == "exec"
     assert "--ephemeral" in invocation.argv
     assert "--ignore-user-config" in invocation.argv
     assert "--ignore-rules" in invocation.argv

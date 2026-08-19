@@ -982,14 +982,16 @@ class CodexCliRunner:
     def _build_argv(self, schema_path: Path, output_path: Path) -> tuple[str, ...]:
         argv: list[str] = [
             self.settings.cli_path,
+            # Codex CLI treats approval policy as a global option; keep it
+            # before the exec subcommand so current CLI releases parse it.
+            "--ask-for-approval",
+            "never",
             "exec",
             "--ephemeral",
             "--ignore-user-config",
             "--ignore-rules",
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
             "--skip-git-repo-check",
             "--color",
             "never",
@@ -1002,7 +1004,6 @@ class CodexCliRunner:
             argv.extend(("--profile", self.settings.profile))
         if self.settings.model:
             argv.extend(("--model", self.settings.model))
-        argv.append("-")
         return tuple(argv)
 
     def _run_process(self, invocation: ProcessInvocation) -> ProcessResult:
