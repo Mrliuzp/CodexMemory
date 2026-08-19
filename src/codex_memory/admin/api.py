@@ -24,6 +24,7 @@ from ..contract_revisions import ContractRevisionConflictError, ContractRevision
 from ..api_operations import OpenAPIContractError
 from ..api_operations import MAX_DOCUMENT_BYTES
 from ..config import is_placeholder_value
+from ..codex_auth import CodexAuthCoordinatorClient, CodexAuthCoordinatorError, normalize_auth_status
 from ..persistence.v15_models import ContractRevisionRow, ContractServiceRow
 
 SORT_FIELDS = {
@@ -591,6 +592,46 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             },
             "request_id": _request_id(request),
         }
+
+    def _codex_auth_status_response(request: Request, status_value: str) -> dict[str, Any]:
+        # The coordinator response is deliberately reduced to a finite status enum;
+        # no account, path, token, URL, or CLI output crosses the API boundary.
+        return {"data": {"status": normalize_auth_status(status_value)}, "request_id": _request_id(request)}
+
+    @router.get("/codex-auth/status")
+    def codex_auth_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        try:
+            require_permission(current, "operations_read")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        return _codex_auth_status_response(request, CodexAuthCoordinatorClient.from_env().status())
+
+    def _codex_auth_command(
+        request: Request,
+        current: Principal,
+        operation: Callable[[CodexAuthCoordinatorClient], str],
+    ) -> dict[str, Any]:
+        try:
+            require_permission(current, "admin")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
+        try:
+            status_value = operation(CodexAuthCoordinatorClient.from_env())
+        except CodexAuthCoordinatorError:
+            status_value = "error"
+        return _codex_auth_status_response(request, status_value)
+
+    @router.post("/codex-auth/start")
+    def codex_auth_start(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        return _codex_auth_command(request, current, lambda client: client.start_login())
+
+    @router.post("/codex-auth/cancel")
+    def codex_auth_cancel(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        return _codex_auth_command(request, current, lambda client: client.cancel_login())
+
+    @router.post("/codex-auth/recheck")
+    def codex_auth_recheck(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        return _codex_auth_command(request, current, lambda client: client.recheck())
 
     @router.get("/dashboard")
     def dashboard(

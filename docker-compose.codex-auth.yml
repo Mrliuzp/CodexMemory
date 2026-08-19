@@ -1,0 +1,20 @@
+services:
+  api:
+    environment:
+      CODEX_MEMORY_CODEX_AUTH_COORDINATOR_URL: ${CODEX_MEMORY_CODEX_AUTH_COORDINATOR_URL:-http://host.docker.internal:1456}
+      CODEX_MEMORY_CODEX_AUTH_COORDINATOR_TOKEN: ${CODEX_MEMORY_CODEX_AUTH_COORDINATOR_TOKEN:-}
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      # Still false unless explicitly enabled in a separately reviewed rollout.
+      CODEX_MEMORY_CODEX_CLI_ENABLED: ${CODEX_MEMORY_CODEX_CLI_ENABLED:-false}
+      CODEX_MEMORY_CODEX_CLI_PATH: ${CODEX_MEMORY_CODEX_CLI_PATH:-/root/.local/bin/codex}
+      CODEX_MEMORY_CODEX_CLI_AUTH_ROOT: /run/codex-memory-codex-auth
+    volumes:
+      - type: bind
+        source: ${CODEX_MEMORY_CODEX_CLI_AUTH_DIR:?Set CODEX_MEMORY_CODEX_CLI_AUTH_DIR to a dedicated non-repository auth root}
+        target: /run/codex-memory-codex-auth
+        read_only: true

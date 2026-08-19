@@ -271,6 +271,46 @@ def test_admin_me_dashboard_and_projects_are_project_scoped(admin_experience: tu
     assert scopes[0]["name"] == "默认 Scope"
 
 
+def test_codex_auth_status_is_readable_and_actions_are_admin_only(
+    admin_experience: tuple[TestClient, Any, dict[str, int]], monkeypatch
+) -> None:
+    from codex_memory.codex_auth import AUTH_STATUS_LOGIN_IN_PROGRESS, AUTH_STATUS_READY, CodexAuthCoordinatorClient
+
+    class FakeCoordinator:
+        def __init__(self) -> None:
+            self.status_value = AUTH_STATUS_READY
+
+        def status(self) -> str:
+            return self.status_value
+
+        def start_login(self) -> str:
+            self.status_value = AUTH_STATUS_LOGIN_IN_PROGRESS
+            return self.status_value
+
+        def cancel_login(self) -> str:
+            self.status_value = "not_logged_in"
+            return self.status_value
+
+        def recheck(self) -> str:
+            return self.status_value
+
+    fake = FakeCoordinator()
+    monkeypatch.setattr(CodexAuthCoordinatorClient, "from_env", classmethod(lambda cls: fake))
+    client, _, _ = admin_experience
+
+    status_response = client.get("/api/admin/v1/codex-auth/status", headers=_auth("admin-a"))
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["data"] == {"status": "ready"}
+    assert isinstance(status_payload["request_id"], str)
+
+    denied = client.post("/api/admin/v1/codex-auth/start", headers=_auth("reader-a"))
+    assert denied.status_code == 403
+    started = client.post("/api/admin/v1/codex-auth/start", headers=_auth("admin-a"))
+    assert started.status_code == 200
+    assert started.json()["data"] == {"status": "login_in_progress"}
+
+
 def test_admin_resource_filters_are_explicit_and_isolated(admin_experience: tuple[TestClient, Any, dict[str, int]]) -> None:
     client, _, ids = admin_experience
     common = {"project_key": "project-a", "created_from": "2026-07-01T00:00:00Z"}

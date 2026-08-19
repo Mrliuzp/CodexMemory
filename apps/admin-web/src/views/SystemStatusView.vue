@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
-import { adminGet, adminPut } from '../api'
+import { adminGet, adminPost, adminPut } from '../api'
+import CodexAuthCard from '../components/CodexAuthCard.vue'
 import CopyableText from '../components/CopyableText.vue'
 import DateTime from '../components/DateTime.vue'
 import ErrorState from '../components/ErrorState.vue'
@@ -21,6 +22,8 @@ const policy = ref(null)
 const flags = ref(null)
 const configSaving = ref(false)
 const configError = ref(null)
+const codexAuthStatus = ref('error')
+const codexAuthBusy = ref(false)
 const projectKey = computed(() => String(route.query.project_key || '').trim())
 const flagDefinitions = [
   { key: 'memory_v11_enabled', label: 'V1.1 记忆管线' },
@@ -61,6 +64,7 @@ async function refresh(manual = false) {
     const result = await adminGet('/system/status', projectKey.value ? { project_key: projectKey.value } : {})
     data.value = result.data || {}
     requestId.value = result.request_id || ''
+    await refreshCodexAuth()
     if (projectKey.value) {
       const [policyResult, flagsResult] = await Promise.all([
         adminGet(`/projects/${encodeURIComponent(projectKey.value)}/decision-policy`),
@@ -79,6 +83,39 @@ async function refresh(manual = false) {
     loading.value = false
     refreshing.value = false
   }
+}
+
+async function refreshCodexAuth() {
+  try {
+    const result = await adminGet('/codex-auth/status')
+    codexAuthStatus.value = result.data?.status || 'error'
+  } catch {
+    codexAuthStatus.value = 'error'
+  }
+}
+
+async function codexAuthAction(action) {
+  codexAuthBusy.value = true
+  try {
+    const result = await adminPost(`/codex-auth/${action}`, {})
+    codexAuthStatus.value = result.data?.status || 'error'
+  } catch {
+    codexAuthStatus.value = 'error'
+  } finally {
+    codexAuthBusy.value = false
+  }
+}
+
+function startCodexLogin() {
+  return codexAuthAction('start')
+}
+
+function cancelCodexLogin() {
+  return codexAuthAction('cancel')
+}
+
+function recheckCodexLogin() {
+  return codexAuthAction('recheck')
 }
 
 async function savePolicy() {
@@ -136,6 +173,14 @@ watch(projectKey, () => refresh())
         <div><span class="health-banner__pulse" /><div><span class="eyebrow">综合状态</span><h3>{{ overallStatus === 'ok' ? '关键链路运行正常' : overallStatus === 'error' ? '发现需要立即处理的异常' : '系统可用，但存在待处理事项' }}</h3></div></div>
         <StatusTag :status="overallStatus" :label="overallStatus === 'ok' ? '健康' : overallStatus === 'error' ? '异常' : '有待办'" />
       </div>
+
+      <CodexAuthCard
+        :status="codexAuthStatus"
+        :busy="codexAuthBusy"
+        @start="startCodexLogin"
+        @cancel="cancelCodexLogin"
+        @recheck="recheckCodexLogin"
+      />
 
       <div class="health-grid">
         <button v-for="item in checks" :key="item.label" class="health-card" :class="{ 'is-actionable': item.to }" :disabled="!item.to" @click="open(item)">

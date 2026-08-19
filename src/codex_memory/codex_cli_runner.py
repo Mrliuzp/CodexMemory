@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import posixpath
 import re
 import signal
 import subprocess
@@ -30,6 +32,9 @@ _MAX_CLI_PATH_LENGTH = 4096
 _MAX_ERROR_TEXT_LENGTH = 2048
 _MAX_OUTPUT_BYTES_HARD_LIMIT = 64 * 1024 * 1024
 _TOKEN_BYTES = 4
+_ACTIVE_GENERATION_FILE = ".active-generation"
+_ROOT_GENERATION = "root"
+_DISABLED_GENERATION = "disabled"
 
 
 def _utc_today() -> date:
@@ -84,6 +89,7 @@ class CodexCliSettings:
 
     enabled: bool = False
     cli_path: str = "codex"
+    auth_root: str | None = None
     profile: str | None = None
     model: str | None = None
     timeout_seconds: float = 60.0
@@ -95,6 +101,18 @@ class CodexCliSettings:
     def __post_init__(self) -> None:
         if not self.cli_path or len(self.cli_path) > _MAX_CLI_PATH_LENGTH or "\x00" in self.cli_path:
             raise ValueError("cli_path 必须是非空且不包含 NUL 的路径")
+        if self.auth_root is not None:
+            if (
+                not self.auth_root.strip()
+                or len(self.auth_root) > _MAX_CLI_PATH_LENGTH
+                or "\x00" in self.auth_root
+                or not (
+                    Path(self.auth_root).is_absolute()
+                    or ntpath.isabs(self.auth_root)
+                    or posixpath.isabs(self.auth_root)
+                )
+            ):
+                raise ValueError("auth_root 必须是绝对路径且不包含 NUL")
         for name, value in (("profile", self.profile), ("model", self.model)):
             if value is not None and (
                 not value.strip()
@@ -139,6 +157,7 @@ class CodexCliSettings:
         return cls(
             enabled=_parse_bool(enabled_text, "CODEX_MEMORY_CODEX_CLI_ENABLED"),
             cli_path=_env_value(env, "PATH", "codex") or "codex",
+            auth_root=_optional_text(_env_value(env, "AUTH_ROOT")),
             profile=_optional_text(_env_value(env, "PROFILE")),
             model=_optional_text(_env_value(env, "MODEL")),
             timeout_seconds=_parse_float(timeout_text, "CODEX_MEMORY_CODEX_CLI_TIMEOUT_SECONDS"),
@@ -726,7 +745,7 @@ _CUSTOM_ENVIRONMENT_KEYS = {
 
 
 def _isolate_environment(environment: Mapping[str, str], root: Path) -> dict[str, str]:
-    """过滤注入环境，并把用户目录和 Codex 状态目录重定向到临时目录。"""
+    """过滤注入环境，并只把认证目录以受控只读根目录传给 CLI。"""
 
     safe = {key: value for key, value in environment.items() if key in _CUSTOM_ENVIRONMENT_KEYS}
     isolated_home = root / "home"
@@ -734,15 +753,54 @@ def _isolate_environment(environment: Mapping[str, str], root: Path) -> dict[str
     isolated_appdata = root / "appdata"
     isolated_local_appdata = root / "local-appdata"
     isolated_codex_home = root / "codex-home"
-    for directory in (isolated_home, isolated_tmp, isolated_appdata, isolated_local_appdata, isolated_codex_home):
+    isolated_codex_sqlite = root / "codex-sqlite"
+    for directory in (
+        isolated_home,
+        isolated_tmp,
+        isolated_appdata,
+        isolated_local_appdata,
+        isolated_codex_home,
+        isolated_codex_sqlite,
+    ):
         directory.mkdir()
+    configured_auth_root = environment.get("CODEX_MEMORY_CODEX_CLI_AUTH_ROOT")
+    if configured_auth_root:
+        # The pointer is coordinator-owned metadata. The mounted root itself is
+        # read-only for the Worker; never fall back to the default user home.
+        auth_root = Path(configured_auth_root)
+        pointer_path = auth_root / _ACTIVE_GENERATION_FILE
+        try:
+            generation = pointer_path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError) as error:
+            raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录不可用") from error
+        if generation == _DISABLED_GENERATION or not generation:
+            raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录当前未激活")
+        if generation == _ROOT_GENERATION:
+            selected_home = auth_root
+        elif re.fullmatch(r"generation-[A-Za-z0-9_-]{1,96}", generation):
+            selected_home = auth_root / generation
+        else:
+            raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录指针无效")
+        try:
+            root_resolved = auth_root.resolve(strict=True)
+            selected_resolved = selected_home.resolve(strict=True)
+        except OSError as error:
+            raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录不可用") from error
+        if selected_resolved != root_resolved and root_resolved not in selected_resolved.parents:
+            raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录指针越界")
+        if not selected_resolved.is_dir():
+            raise CodexCliAuthenticationError("Worker 专用 Codex 认证目录不可用")
+        codex_home = str(selected_resolved)
+    else:
+        codex_home = str(isolated_codex_home)
     safe.update(
         {
             "HOME": str(isolated_home),
             "USERPROFILE": str(isolated_home),
             "APPDATA": str(isolated_appdata),
             "LOCALAPPDATA": str(isolated_local_appdata),
-            "CODEX_HOME": str(isolated_codex_home),
+            "CODEX_HOME": codex_home,
+            "CODEX_SQLITE_HOME": str(isolated_codex_sqlite),
             "TEMP": str(isolated_tmp),
             "TMP": str(isolated_tmp),
             "TMPDIR": str(isolated_tmp),
@@ -828,7 +886,10 @@ class CodexCliRunner:
                     argv=self._build_argv(schema_path, output_path),
                     cwd=root,
                     stdin=prompt,
-                    env=_isolate_environment(self.environment_factory(), root),
+                    env=_isolate_environment(
+                        {**self.environment_factory(), "CODEX_MEMORY_CODEX_CLI_AUTH_ROOT": self.settings.auth_root or ""},
+                        root,
+                    ),
                     timeout_seconds=self.settings.timeout_seconds,
                     max_output_bytes=min(
                         self.settings.max_output_bytes,

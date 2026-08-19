@@ -315,6 +315,7 @@ def test_settings_can_be_loaded_from_environment_without_enabling_runner() -> No
     settings = CodexCliSettings.from_env(
         {
             "CODEX_MEMORY_CODEX_CLI_PATH": "codex-test",
+            "CODEX_MEMORY_CODEX_CLI_AUTH_ROOT": "/run/codex-memory-auth",
             "CODEX_MEMORY_CODEX_CLI_TIMEOUT_SECONDS": "12.5",
             "CODEX_MEMORY_CODEX_CLI_MAX_CONCURRENCY": "3",
             "CODEX_MEMORY_CODEX_CLI_CONTEXT_BUDGET_TOKENS": "123",
@@ -324,6 +325,7 @@ def test_settings_can_be_loaded_from_environment_without_enabling_runner() -> No
 
     assert settings.enabled is False
     assert settings.cli_path == "codex-test"
+    assert settings.auth_root == "/run/codex-memory-auth"
     assert settings.timeout_seconds == 12.5
     assert settings.max_concurrency == 3
     assert settings.context_budget_tokens == 123

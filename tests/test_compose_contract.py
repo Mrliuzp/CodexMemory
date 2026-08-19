@@ -99,3 +99,18 @@ def test_compose_requires_non_default_admin_credentials() -> None:
     ):
         assert environment[variable].startswith(f"${{{variable}:?")
         assert ":-" not in environment[variable]
+
+
+def test_codex_auth_override_is_worker_only_and_read_only() -> None:
+    override = yaml.safe_load(Path("docker-compose.codex-auth.yml").read_text(encoding="utf-8"))
+    services = override["services"]
+
+    assert "worker" in services
+    assert "api" in services
+    assert "admin-web" not in services
+    worker = services["worker"]
+    assert worker["environment"]["CODEX_MEMORY_CODEX_CLI_ENABLED"].endswith(":-false}")
+    assert worker["environment"]["CODEX_MEMORY_CODEX_CLI_AUTH_ROOT"] == "/run/codex-memory-codex-auth"
+    auth_mount = next(item for item in worker["volumes"] if item.get("target") == "/run/codex-memory-codex-auth")
+    assert auth_mount["read_only"] is True
+    assert "CODEX_MEMORY_CODEX_CLI_AUTH_DIR" in auth_mount["source"]

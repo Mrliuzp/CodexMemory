@@ -36,7 +36,7 @@ codex exec --ephemeral --ignore-user-config --ignore-rules
   --color never --output-schema <临时 Schema> --output-last-message <临时输出> -
 ```
 
-不传入 `--add-dir`、`--yolo`、`--full-auto` 或远程连接参数。子进程使用受限环境变量白名单，并把 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`CODEX_HOME` 和临时目录重定向到本次运行目录；默认不传递 API key、数据库连接串和 Docker 环境变量，也不会创建、读取或修改项目凭据。底层进程 runner 以无 shell 方式启动，超时或输出超限时终止进程树。
+不传入 `--add-dir`、`--yolo`、`--full-auto` 或远程连接参数。子进程使用受限环境变量白名单，并把 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`CODEX_SQLITE_HOME` 和临时目录重定向到本次运行目录；工作目录、Schema、输出和 SQLite 状态永远是本次调用的临时目录，不挂载项目仓库。只有显式配置 `CODEX_MEMORY_CODEX_CLI_AUTH_ROOT` 时，Runner 才从该 Worker 专用根目录的 `.active-generation` 元数据指针选择 `CODEX_HOME`；该根目录必须由 Compose 以只读方式挂载给 Worker，Runner 不会回退到默认用户目录。默认不传递 API key、数据库连接串和 Docker 环境变量，也不会由 API 容器读取认证文件。底层进程 runner 以无 shell 方式启动，超时或输出超限时终止进程树。
 
 解析时只选取最后一条通过 Schema 校验的完整 JSON；所有进程错误摘要都会先脱敏并截断。模型返回内容永远不会触发命令执行或数据库写入。
 
@@ -48,6 +48,7 @@ codex exec --ephemeral --ignore-user-config --ignore-rules
 | --- | --- | --- |
 | 是否启用 | `..._ENABLED` | `false` |
 | CLI 路径 | `..._PATH` | `codex` |
+| Worker 认证根目录 | `..._AUTH_ROOT` | 空（每次调用不可用认证） |
 | Profile | `..._PROFILE` | 空 |
 | Model | `..._MODEL` | 空 |
 | 单次超时秒数 | `..._TIMEOUT_SECONDS` | `60` |
@@ -61,3 +62,14 @@ codex exec --ephemeral --ignore-user-config --ignore-rules
 ## Worker 集成契约
 
 Worker 在同一项目授权和 `decision_engine_enabled` 检查之后，通过 `CodexCliDecisionAdapter` 构造最小 `CodexCliRequest`。adapter 先用 `ModelDecisionOutput` 严格校验并映射建议，Worker 再由 `DecisionService` 记录运行与决策，最后交给 `CandidatePolicyService` 执行项目级发布门禁。失败记录分类错误，不保存原始 prompt、完整 stdout/stderr 或凭据；Runner 不负责自动写入、发布或 provider 路由。
+
+## 认证协调器
+
+认证文件由仓库外的本机协调器维护，API 只接收有限状态：`ready`、`not_logged_in`、`login_in_progress`、`error`。协调器启动交互式 `codex login` 时使用新 generation；启动更换账号前先原子写入 `disabled`，登录成功后再原子替换 `.active-generation`，取消或失败保持禁用。Worker 只读挂载认证根目录，协调器是唯一写入方。
+
+管理后台的入口是“运行监控 → 系统状态”页面。管理员可看到有限登录状态，并使用“开始登录/更换账号”“取消”“重新检查”；页面不显示账号、token、认证文件内容或认证 URL。后端接口为：
+
+- `GET /api/admin/v1/codex-auth/status`（`operations_read`）；
+- `POST /api/admin/v1/codex-auth/start`、`/cancel`、`/recheck`（`admin`）。
+
+认证协调器的启动、专用目录和 `CODEX_MEMORY_CODEX_AUTH_COORDINATOR_TOKEN` 只通过本机受控环境提供，不写入仓库、`.env`、数据库或日志。详见 [`docs/CODEX_AUTH_COORDINATOR.md`](CODEX_AUTH_COORDINATOR.md)。候选、决策、自动发布和真实模型调用仍须单独灰度授权。
