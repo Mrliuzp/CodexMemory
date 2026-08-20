@@ -228,6 +228,61 @@ def decision_json_schema() -> dict[str, Any]:
     return ModelDecisionOutput.model_json_schema()
 
 
+def cli_decision_json_schema() -> dict[str, Any]:
+    """返回 Codex CLI 可消费的扁平 Schema；完整校验仍由 Pydantic 服务端执行。
+
+    Codex CLI 的结构化输出参数不接受 Pydantic 生成的 ``$defs``/``$ref``
+    引用图。这里保留字段、枚举、边界和必填约束，但把 EvidenceRange
+    内联，并有意不表达跨字段约束（例如 end_char 必须大于 start_char）；
+    这些约束仍由 ``ModelDecisionOutput`` 及后续证据服务端再次校验。
+    """
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "decision",
+            "confidence",
+            "title",
+            "content",
+            "reason",
+            "evidence_ranges",
+            "risk_flags",
+            "level",
+            "scope",
+        ],
+        "properties": {
+            "decision": {"type": "string", "enum": [item.value for item in DecisionAction]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "title": {"type": "string", "minLength": 1, "maxLength": 300},
+            "content": {"type": "object"},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "evidence_ranges": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["message_id", "start_char", "end_char", "quote"],
+                    "properties": {
+                        "message_id": {"type": "integer", "minimum": 1},
+                        "start_char": {"type": "integer", "minimum": 0, "maximum": 1000000},
+                        "end_char": {"type": "integer", "exclusiveMinimum": 0, "maximum": 1000000},
+                        "quote": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    },
+                },
+            },
+            "risk_flags": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {"type": "string", "enum": [item.value for item in DecisionRiskFlag]},
+            },
+            "level": {"type": "string", "enum": [item.value for item in DecisionLevel]},
+            "scope": {"type": "string", "enum": [item.value for item in DecisionScope]},
+        },
+    }
+
+
 __all__ = [
     "DecisionAction",
     "DecisionErrorClass",
@@ -244,5 +299,6 @@ __all__ = [
     "ModelDecisionOutput",
     "ProjectDecisionPolicy",
     "ReviewAction",
+    "cli_decision_json_schema",
     "decision_json_schema",
 ]

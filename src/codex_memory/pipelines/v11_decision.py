@@ -170,7 +170,7 @@ class CodexCliDecisionAdapter:
             CodexCliError,
             CodexCliRequest,
         )
-        from ..decision_models import ModelDecisionOutput, decision_json_schema
+        from ..decision_models import ModelDecisionOutput, cli_decision_json_schema
 
         if not candidate.project_key.strip():
             raise CandidateDecisionError("project_key_missing", "候选快照缺少明确项目标识", retryable=False)
@@ -200,7 +200,7 @@ class CodexCliDecisionAdapter:
             project_key=candidate.project_key,
             task="根据同项目候选和证据，返回严格的 ModelDecisionOutput；不执行任何写操作。",
             context=context,
-            output_schema=decision_json_schema(),
+            output_schema=cli_decision_json_schema(),
             request_id=f"candidate:{candidate.candidate_id}",
         )
         try:
