@@ -6,12 +6,17 @@ import CodexAuthCard from './CodexAuthCard.vue'
 import { useSessionStore } from '../stores/session'
 
 const ButtonStub = defineComponent({
-  props: ['disabled'],
-  setup: (props, { slots }) => () => h('button', { disabled: props.disabled }, slots.default?.()),
+  props: ['disabled', 'loading'],
+  setup: (props, { slots }) => () => h('button', { disabled: props.disabled, 'data-loading': props.loading ? 'true' : undefined }, slots.default?.()),
 })
 
 const TagStub = defineComponent({
   setup: (_, { slots }) => () => h('span', slots.default?.()),
+})
+
+const AlertStub = defineComponent({
+  props: ['title', 'type'],
+  setup: (props, { slots }) => () => h('div', { 'data-alert': props.type }, [props.title, slots.default?.()]),
 })
 
 async function render(props, permissions) {
@@ -22,6 +27,7 @@ async function render(props, permissions) {
   app.use(pinia)
   app.component('el-button', ButtonStub)
   app.component('el-tag', TagStub)
+  app.component('el-alert', AlertStub)
   return renderToString(app)
 }
 
@@ -44,7 +50,20 @@ describe('CodexAuthCard', () => {
 
     expect(html).toContain('未登录')
     expect(html).toContain('只读访问')
-    expect(html).not.toContain('开始登录')
+    expect(html).not.toContain('<button')
     expect(html).not.toContain('重新检查')
+  })
+
+  it('错误状态显示可操作原因并为当前动作提供 loading 反馈', async () => {
+    const html = await render({
+      status: 'error',
+      reason: 'coordinator_unreachable',
+      busyAction: 'start',
+      feedback: { type: 'error', message: '认证协调器不可达，请确认协调器正在运行后再重试。' },
+    }, ['admin'])
+
+    expect(html).toContain('认证协调器不可达，请确认协调器正在运行后再重试。')
+    expect(html).toContain('data-loading="true"')
+    expect(html).toContain('开始登录')
   })
 })

@@ -11,6 +11,8 @@ from codex_memory.codex_auth import (
     AUTH_STATUS_LOGIN_IN_PROGRESS,
     AUTH_STATUS_NOT_LOGGED_IN,
     AUTH_STATUS_READY,
+    AUTH_REASON_COORDINATOR_NOT_CONFIGURED,
+    AUTH_REASON_COORDINATOR_UNREACHABLE,
     CodexAuthCoordinatorClient,
     CodexAuthGenerationManager,
     DISABLED_GENERATION,
@@ -186,3 +188,24 @@ def test_coordinator_client_exposes_only_finite_status_and_uses_control_token() 
     )
     assert client.status() == AUTH_STATUS_READY
     assert observed == {"authorization": "Bearer coordinator-test-token", "timeout": 3.0}
+
+
+def test_coordinator_status_detail_reports_missing_configuration_without_sensitive_values() -> None:
+    detail = CodexAuthCoordinatorClient().status_detail()
+
+    assert detail.status == AUTH_STATUS_ERROR
+    assert detail.reason == AUTH_REASON_COORDINATOR_NOT_CONFIGURED
+    assert detail.message == "认证协调器未配置，请先配置协调器地址。"
+
+
+def test_coordinator_status_detail_reports_unreachable_without_transport_details() -> None:
+    def opener(_request, timeout):
+        assert timeout == 3.0
+        raise OSError("private transport detail")
+
+    detail = CodexAuthCoordinatorClient("http://127.0.0.1:1456", "test-control-token", opener=opener).status_detail()
+
+    assert detail.status == AUTH_STATUS_ERROR
+    assert detail.reason == AUTH_REASON_COORDINATOR_UNREACHABLE
+    assert detail.message == "认证协调器不可达，请检查服务是否运行。"
+    assert "private transport detail" not in detail.message

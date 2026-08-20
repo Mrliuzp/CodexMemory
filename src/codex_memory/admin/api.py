@@ -24,7 +24,7 @@ from ..contract_revisions import ContractRevisionConflictError, ContractRevision
 from ..api_operations import OpenAPIContractError
 from ..api_operations import MAX_DOCUMENT_BYTES
 from ..config import is_placeholder_value
-from ..codex_auth import CodexAuthCoordinatorClient, CodexAuthCoordinatorError, normalize_auth_status
+from ..codex_auth import CodexAuthCoordinatorClient, CodexAuthCoordinatorError, CodexAuthStatus, describe_auth_status
 from ..persistence.v15_models import ContractRevisionRow, ContractServiceRow
 
 SORT_FIELDS = {
@@ -593,10 +593,12 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             "request_id": _request_id(request),
         }
 
-    def _codex_auth_status_response(request: Request, status_value: str) -> dict[str, Any]:
-        # The coordinator response is deliberately reduced to a finite status enum;
-        # no account, path, token, URL, or CLI output crosses the API boundary.
-        return {"data": {"status": normalize_auth_status(status_value)}, "request_id": _request_id(request)}
+    def _codex_auth_status_response(request: Request, detail: CodexAuthStatus) -> dict[str, Any]:
+        # 这里只返回有限状态、可操作原因和中文提示，不跨越账号、路径、令牌或认证文件边界。
+        return {
+            "data": {"status": detail.status, "reason": detail.reason, "message": detail.message},
+            "request_id": _request_id(request),
+        }
 
     @router.get("/codex-auth/status")
     def codex_auth_status(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
@@ -604,7 +606,7 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             require_permission(current, "operations_read")
         except PermissionDenied as error:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
-        return _codex_auth_status_response(request, CodexAuthCoordinatorClient.from_env().status())
+        return _codex_auth_status_response(request, CodexAuthCoordinatorClient.from_env().status_detail())
 
     def _codex_auth_command(
         request: Request,
@@ -617,9 +619,15 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             raise _error(request, "permission_denied", str(error), status.HTTP_403_FORBIDDEN) from error
         try:
             status_value = operation(CodexAuthCoordinatorClient.from_env())
-        except CodexAuthCoordinatorError:
-            status_value = "error"
-        return _codex_auth_status_response(request, status_value)
+        except CodexAuthCoordinatorError as error:
+            raise _error(
+                request,
+                f"codex_auth_{error.code}",
+                str(error),
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                meta={"reason": error.code},
+            ) from error
+        return _codex_auth_status_response(request, describe_auth_status(status_value))
 
     @router.post("/codex-auth/start")
     def codex_auth_start(request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { adminGet, AdminApiError } from './api'
+import { adminGet, adminPost, AdminApiError } from './api'
 
 function response(status, payload, requestId = '') {
   return {
@@ -41,5 +41,22 @@ describe('管理 API 客户端', () => {
   it('将网络故障转换为可行动的中文错误', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network down')))
     await expect(adminGet('/dashboard')).rejects.toMatchObject({ code: 'network_error', message: '无法连接管理 API，请检查服务状态后重试。' })
+  })
+
+  it('使用固定的 Codex Auth 路由和 HTTP 方法', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(200, { data: { status: 'ready' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await adminGet('/codex-auth/status')
+    await adminPost('/codex-auth/start', {})
+    await adminPost('/codex-auth/cancel', {})
+    await adminPost('/codex-auth/recheck', {})
+
+    expect(fetchMock.mock.calls.map(([url, options]) => [url.pathname, options.method || 'GET'])).toEqual([
+      ['/api/admin/v1/codex-auth/status', 'GET'],
+      ['/api/admin/v1/codex-auth/start', 'POST'],
+      ['/api/admin/v1/codex-auth/cancel', 'POST'],
+      ['/api/admin/v1/codex-auth/recheck', 'POST'],
+    ])
   })
 })

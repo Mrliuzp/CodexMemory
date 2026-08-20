@@ -306,6 +306,10 @@ code { padding: 2px 5px; border-radius: 5px; background: var(--mist); color: var
 .codex-auth-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .codex-auth-card__heading h2 { margin: 5px 0 0; font-size: 17px; }
 .codex-auth-card__note { margin: 12px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.codex-auth-card__message { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.codex-auth-card__message--error { color: var(--red); }
+.codex-auth-card__message--pending { color: var(--amber); }
+.codex-auth-card__feedback { margin-bottom: 14px; }
 .codex-auth-card__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 .policy-config, .flag-config { display: grid; gap: 14px; margin-top: 18px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
 .policy-config__row, .flag-config__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
-import { adminGet, adminPost, adminPut } from '../api'
+import { adminGet, adminPost, adminPut, getErrorMessage } from '../api'
 import CodexAuthCard from '../components/CodexAuthCard.vue'
 import CopyableText from '../components/CopyableText.vue'
 import DateTime from '../components/DateTime.vue'
@@ -24,7 +24,10 @@ const flags = ref(null)
 const configSaving = ref(false)
 const configError = ref(null)
 const codexAuthStatus = ref('error')
-const codexAuthBusy = ref(false)
+const codexAuthReason = ref('')
+const codexAuthMessage = ref('')
+const codexAuthBusy = ref('')
+const codexAuthFeedback = ref(null)
 const projectKey = computed(() => String(route.query.project_key || '').trim())
 const flagDefinitions = [
   { key: 'memory_v11_enabled', label: 'V1.1 记忆管线' },
@@ -61,6 +64,7 @@ async function refresh(manual = false) {
   else if (!Object.keys(data.value).length) loading.value = true
   error.value = null
   configError.value = null
+  codexAuthFeedback.value = null
   try {
     const result = await adminGet('/system/status', projectKey.value ? { project_key: projectKey.value } : {})
     data.value = result.data || {}
@@ -90,20 +94,46 @@ async function refreshCodexAuth() {
   try {
     const result = await adminGet('/codex-auth/status')
     codexAuthStatus.value = result.data?.status || 'error'
-  } catch {
+    codexAuthReason.value = result.data?.reason || ''
+    codexAuthMessage.value = result.data?.message || ''
+  } catch (requestError) {
     codexAuthStatus.value = 'error'
+    codexAuthReason.value = requestError?.code || 'admin_api_unavailable'
+    codexAuthMessage.value = getErrorMessage(requestError)
+    codexAuthFeedback.value = {
+      type: 'error',
+      message: codexAuthMessage.value,
+      requestId: requestError?.requestId || '',
+    }
   }
 }
 
 async function codexAuthAction(action) {
-  codexAuthBusy.value = true
+  if (codexAuthBusy.value) return
+  codexAuthBusy.value = action
+  codexAuthFeedback.value = null
   try {
     const result = await adminPost(`/codex-auth/${action}`, {})
     codexAuthStatus.value = result.data?.status || 'error'
-  } catch {
+    codexAuthReason.value = result.data?.reason || ''
+    codexAuthMessage.value = result.data?.message || ''
+    const actionLabel = { start: '开始登录', cancel: '取消登录', recheck: '重新检查' }[action] || '操作'
+    codexAuthFeedback.value = {
+      type: codexAuthStatus.value === 'error' ? 'error' : 'success',
+      message: `${actionLabel}：${codexAuthMessage.value || '操作已完成。'}`,
+      requestId: result.request_id || '',
+    }
+  } catch (requestError) {
     codexAuthStatus.value = 'error'
+    codexAuthReason.value = requestError?.meta?.reason || requestError?.code || 'admin_api_unavailable'
+    codexAuthMessage.value = getErrorMessage(requestError)
+    codexAuthFeedback.value = {
+      type: 'error',
+      message: codexAuthMessage.value,
+      requestId: requestError?.requestId || '',
+    }
   } finally {
-    codexAuthBusy.value = false
+    codexAuthBusy.value = ''
   }
 }
 
@@ -177,7 +207,10 @@ watch(projectKey, () => refresh())
 
       <CodexAuthCard
         :status="codexAuthStatus"
-        :busy="codexAuthBusy"
+        :reason="codexAuthReason"
+        :message="codexAuthMessage"
+        :busy-action="codexAuthBusy"
+        :feedback="codexAuthFeedback"
         @start="startCodexLogin"
         @cancel="cancelCodexLogin"
         @recheck="recheckCodexLogin"

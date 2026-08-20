@@ -274,7 +274,7 @@ def test_admin_me_dashboard_and_projects_are_project_scoped(admin_experience: tu
 def test_codex_auth_status_is_readable_and_actions_are_admin_only(
     admin_experience: tuple[TestClient, Any, dict[str, int]], monkeypatch
 ) -> None:
-    from codex_memory.codex_auth import AUTH_STATUS_LOGIN_IN_PROGRESS, AUTH_STATUS_READY, CodexAuthCoordinatorClient
+    from codex_memory.codex_auth import AUTH_STATUS_LOGIN_IN_PROGRESS, AUTH_STATUS_NOT_LOGGED_IN, AUTH_STATUS_READY, CodexAuthCoordinatorClient
 
     class FakeCoordinator:
         def __init__(self) -> None:
@@ -301,14 +301,53 @@ def test_codex_auth_status_is_readable_and_actions_are_admin_only(
     status_response = client.get("/api/admin/v1/codex-auth/status", headers=_auth("admin-a"))
     assert status_response.status_code == 200
     status_payload = status_response.json()
-    assert status_payload["data"] == {"status": "ready"}
+    assert status_payload["data"] == {
+        "status": "ready",
+        "reason": "ready",
+        "message": "Codex CLI 已登录，可点击“更换账号”启动新的登录流程。",
+    }
     assert isinstance(status_payload["request_id"], str)
 
-    denied = client.post("/api/admin/v1/codex-auth/start", headers=_auth("reader-a"))
-    assert denied.status_code == 403
+    for action in ("start", "cancel", "recheck"):
+        denied = client.post(f"/api/admin/v1/codex-auth/{action}", headers=_auth("reader-a"))
+        assert denied.status_code == 403
     started = client.post("/api/admin/v1/codex-auth/start", headers=_auth("admin-a"))
     assert started.status_code == 200
-    assert started.json()["data"] == {"status": "login_in_progress"}
+    assert started.json()["data"] == {
+        "status": "login_in_progress",
+        "reason": "login_in_progress",
+        "message": "登录正在进行中，可等待完成或点击“取消”。",
+    }
+    cancelled = client.post("/api/admin/v1/codex-auth/cancel", headers=_auth("admin-a"))
+    assert cancelled.status_code == 200
+    assert cancelled.json()["data"]["status"] == AUTH_STATUS_NOT_LOGGED_IN
+    rechecked = client.post("/api/admin/v1/codex-auth/recheck", headers=_auth("admin-a"))
+    assert rechecked.status_code == 200
+    assert rechecked.json()["data"]["reason"] == AUTH_STATUS_NOT_LOGGED_IN
+
+
+def test_codex_auth_reports_configuration_failure_as_actionable_safe_error(
+    admin_experience: tuple[TestClient, Any, dict[str, int]], monkeypatch
+) -> None:
+    from codex_memory.codex_auth import CodexAuthCoordinatorClient
+
+    monkeypatch.setattr(CodexAuthCoordinatorClient, "from_env", classmethod(lambda cls: CodexAuthCoordinatorClient()))
+    client, _, _ = admin_experience
+
+    status_response = client.get("/api/admin/v1/codex-auth/status", headers=_auth("admin-a"))
+    assert status_response.status_code == 200
+    assert status_response.json()["data"]["reason"] == "coordinator_not_configured"
+    assert status_response.json()["data"]["message"] == "认证协调器未配置，请先配置协调器地址。"
+
+    for action in ("start", "cancel", "recheck"):
+        response = client.post(f"/api/admin/v1/codex-auth/{action}", headers=_auth("admin-a"))
+        assert response.status_code == 503
+        assert response.json()["error"] == {
+            "code": "codex_auth_coordinator_not_configured",
+            "message": "认证协调器未配置，请先配置协调器地址。",
+        }
+        assert response.json()["meta"] == {"reason": "coordinator_not_configured"}
+        assert "test-control-token" not in response.text
 
 
 def test_admin_resource_filters_are_explicit_and_isolated(admin_experience: tuple[TestClient, Any, dict[str, int]]) -> None:

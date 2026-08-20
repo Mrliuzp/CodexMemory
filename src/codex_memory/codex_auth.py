@@ -38,6 +38,17 @@ AUTH_STATUS_VALUES = frozenset(
     }
 )
 
+AUTH_REASON_READY = "ready"
+AUTH_REASON_NOT_LOGGED_IN = "not_logged_in"
+AUTH_REASON_LOGIN_IN_PROGRESS = "login_in_progress"
+AUTH_REASON_AUTH_ERROR = "auth_error"
+AUTH_REASON_COORDINATOR_NOT_CONFIGURED = "coordinator_not_configured"
+AUTH_REASON_COORDINATOR_TOKEN_NOT_CONFIGURED = "coordinator_token_not_configured"
+AUTH_REASON_COORDINATOR_INVALID = "coordinator_invalid"
+AUTH_REASON_COORDINATOR_UNAUTHORIZED = "coordinator_unauthorized"
+AUTH_REASON_COORDINATOR_UNREACHABLE = "coordinator_unreachable"
+AUTH_REASON_COORDINATOR_INVALID_RESPONSE = "coordinator_invalid_response"
+
 AUTH_COORDINATOR_URL_ENV = "CODEX_MEMORY_CODEX_AUTH_COORDINATOR_URL"
 AUTH_COORDINATOR_TOKEN_ENV = "CODEX_MEMORY_CODEX_AUTH_COORDINATOR_TOKEN"
 AUTH_ROOT_ENV = "CODEX_MEMORY_CODEX_CLI_AUTH_ROOT"
@@ -50,9 +61,33 @@ GENERATION_PATTERN = re.compile(r"generation-[A-Za-z0-9_-]{1,96}\Z")
 class CodexAuthCoordinatorError(RuntimeError):
     """协调器不可用或返回了不安全的状态。"""
 
+    def __init__(self, message: str, *, code: str = "coordinator_error") -> None:
+        self.code = code
+        super().__init__(message)
+
 
 def normalize_auth_status(value: Any) -> str:
     return value if isinstance(value, str) and value in AUTH_STATUS_VALUES else AUTH_STATUS_ERROR
+
+
+@dataclass(frozen=True, slots=True)
+class CodexAuthStatus:
+    """对外展示的脱敏登录状态。"""
+
+    status: str
+    reason: str
+    message: str
+
+
+def describe_auth_status(value: Any) -> CodexAuthStatus:
+    status = normalize_auth_status(value)
+    if status == AUTH_STATUS_READY:
+        return CodexAuthStatus(status, AUTH_REASON_READY, "Codex CLI 已登录，可点击“更换账号”启动新的登录流程。")
+    if status == AUTH_STATUS_NOT_LOGGED_IN:
+        return CodexAuthStatus(status, AUTH_REASON_NOT_LOGGED_IN, "Codex CLI 尚未登录，可点击“开始登录”。")
+    if status == AUTH_STATUS_LOGIN_IN_PROGRESS:
+        return CodexAuthStatus(status, AUTH_REASON_LOGIN_IN_PROGRESS, "登录正在进行中，可等待完成或点击“取消”。")
+    return CodexAuthStatus(status, AUTH_REASON_AUTH_ERROR, "Codex CLI 登录状态异常，请点击“重新检查”；若持续失败，请检查协调器和 CLI 登录进程。")
 
 
 class CodexAuthCoordinatorClient:
@@ -77,13 +112,23 @@ class CodexAuthCoordinatorClient:
 
     def _request(self, method: str, path: str) -> str:
         if not self.base_url:
-            raise CodexAuthCoordinatorError("认证协调器未配置")
+            raise CodexAuthCoordinatorError(
+                "认证协调器未配置，请先配置协调器地址。",
+                code=AUTH_REASON_COORDINATOR_NOT_CONFIGURED,
+            )
         parsed = urlsplit(self.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise CodexAuthCoordinatorError("认证协调器地址无效")
+            raise CodexAuthCoordinatorError(
+                "认证协调器地址无效，请检查配置。",
+                code=AUTH_REASON_COORDINATOR_INVALID,
+            )
+        if not self.token:
+            raise CodexAuthCoordinatorError(
+                "认证协调器控制令牌未配置，请先补齐配置。",
+                code=AUTH_REASON_COORDINATOR_TOKEN_NOT_CONFIGURED,
+            )
         headers = {"Accept": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        headers["Authorization"] = f"Bearer {self.token}"
         body = b"{}" if method == "POST" else None
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -91,15 +136,37 @@ class CodexAuthCoordinatorClient:
         try:
             with self.opener(request, timeout=self.timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, OSError, ValueError, UnicodeError) as error:
-            raise CodexAuthCoordinatorError("认证协调器不可用") from error
-        return normalize_auth_status(payload.get("status") if isinstance(payload, dict) else None)
+        except HTTPError as error:
+            if error.code in {401, 403}:
+                raise CodexAuthCoordinatorError(
+                    "认证协调器未接受控制令牌，请检查配置。",
+                    code=AUTH_REASON_COORDINATOR_UNAUTHORIZED,
+                ) from error
+            raise CodexAuthCoordinatorError(
+                "认证协调器不可达，请检查服务是否运行。",
+                code=AUTH_REASON_COORDINATOR_UNREACHABLE,
+            ) from error
+        except (URLError, TimeoutError, OSError, ValueError, UnicodeError) as error:
+            raise CodexAuthCoordinatorError(
+                "认证协调器不可达，请检查服务是否运行。",
+                code=AUTH_REASON_COORDINATOR_UNREACHABLE,
+            ) from error
+        raw_status = payload.get("status") if isinstance(payload, dict) else None
+        if not isinstance(raw_status, str) or raw_status not in AUTH_STATUS_VALUES:
+            raise CodexAuthCoordinatorError(
+                "认证协调器返回了无法识别的状态，请检查协调器版本。",
+                code=AUTH_REASON_COORDINATOR_INVALID_RESPONSE,
+            )
+        return raw_status
 
     def status(self) -> str:
+        return self.status_detail().status
+
+    def status_detail(self) -> CodexAuthStatus:
         try:
-            return self._request("GET", "/status")
-        except CodexAuthCoordinatorError:
-            return AUTH_STATUS_ERROR
+            return describe_auth_status(self._request("GET", "/status"))
+        except CodexAuthCoordinatorError as error:
+            return CodexAuthStatus(AUTH_STATUS_ERROR, error.code, str(error))
 
     def start_login(self) -> str:
         return self._request("POST", "/login/start")
@@ -472,6 +539,16 @@ __all__ = [
     "AUTH_COORDINATOR_TOKEN_ENV",
     "AUTH_COORDINATOR_URL_ENV",
     "AUTH_ROOT_ENV",
+    "AUTH_REASON_AUTH_ERROR",
+    "AUTH_REASON_COORDINATOR_INVALID",
+    "AUTH_REASON_COORDINATOR_INVALID_RESPONSE",
+    "AUTH_REASON_COORDINATOR_NOT_CONFIGURED",
+    "AUTH_REASON_COORDINATOR_TOKEN_NOT_CONFIGURED",
+    "AUTH_REASON_COORDINATOR_UNAUTHORIZED",
+    "AUTH_REASON_COORDINATOR_UNREACHABLE",
+    "AUTH_REASON_LOGIN_IN_PROGRESS",
+    "AUTH_REASON_NOT_LOGGED_IN",
+    "AUTH_REASON_READY",
     "AUTH_STATUS_ERROR",
     "AUTH_STATUS_LOGIN_IN_PROGRESS",
     "AUTH_STATUS_NOT_LOGGED_IN",
@@ -480,8 +557,10 @@ __all__ = [
     "CodexAuthCoordinatorClient",
     "CodexAuthCoordinatorError",
     "CodexAuthGenerationManager",
+    "CodexAuthStatus",
     "DISABLED_GENERATION",
     "ROOT_GENERATION",
+    "describe_auth_status",
     "main",
     "run_coordinator_server",
 ]
