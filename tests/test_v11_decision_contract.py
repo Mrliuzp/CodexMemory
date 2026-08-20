@@ -58,7 +58,7 @@ def test_codex_cli_adapter_maps_strict_output_from_fake_process() -> None:
                 "decision": "publish",
                 "confidence": 0.93,
                 "title": "订单更新规则",
-                "content": {"text": "Use OrderService."},
+                "content": json.dumps({"text": "Use OrderService."}, ensure_ascii=False),
                 "reason": "证据可追溯",
                 "evidence_ranges": [evidence | {"content_hash": None}],
                 "risk_flags": [],

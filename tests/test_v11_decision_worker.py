@@ -33,7 +33,7 @@ class FakeCodexProcess:
             "decision": self.decision,
             "confidence": self.confidence,
             "title": candidate["title"] or "候选规则",
-            "content": candidate["content"],
+            "content": json.dumps(candidate["content"], ensure_ascii=False),
             "reason": "fake runner 仅用于本地集成测试",
             "evidence_ranges": [
                 {

@@ -198,7 +198,7 @@ class CodexCliDecisionAdapter:
         }
         request = CodexCliRequest(
             project_key=candidate.project_key,
-            task="根据同项目候选和证据，返回严格的 ModelDecisionOutput；不执行任何写操作。",
+            task="根据同项目候选和证据，返回严格的 ModelDecisionOutput；CLI 的 content 字段必须是可解析为 JSON 对象的字符串；不执行任何写操作。",
             context=context,
             output_schema=cli_decision_json_schema(),
             request_id=f"candidate:{candidate.candidate_id}",
@@ -220,8 +220,25 @@ class CodexCliDecisionAdapter:
         except Exception as error:
             raise CandidateDecisionError("model_call_failed", "Codex CLI adapter 调用失败", retryable=True) from error
 
+        raw_output = result.data
+        if isinstance(raw_output, Mapping) and isinstance(raw_output.get("content"), str):
+            try:
+                parsed_content = json.loads(raw_output["content"])
+            except (TypeError, ValueError) as error:
+                raise CandidateDecisionError(
+                    "invalid_model_output",
+                    "Codex CLI 的 content 字符串不是有效 JSON 对象",
+                    retryable=True,
+                ) from error
+            if not isinstance(parsed_content, dict):
+                raise CandidateDecisionError(
+                    "invalid_model_output",
+                    "Codex CLI 的 content 必须解析为 JSON 对象",
+                    retryable=True,
+                )
+            raw_output = {**raw_output, "content": parsed_content}
         try:
-            output = ModelDecisionOutput.model_validate(result.data)
+            output = ModelDecisionOutput.model_validate(raw_output)
         except ValidationError as error:
             raise CandidateDecisionError(
                 "invalid_model_output",

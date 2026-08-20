@@ -255,7 +255,11 @@ def cli_decision_json_schema() -> dict[str, Any]:
             "decision": {"type": "string", "enum": [item.value for item in DecisionAction]},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "title": {"type": "string", "minLength": 1, "maxLength": 300},
-            "content": {"type": "object"},
+            # The CLI strict-schema subset requires every object node to
+            # enumerate properties. Content is intentionally open-ended on
+            # the server, so the adapter transports it as JSON text and
+            # restores the dict before Pydantic validation.
+            "content": {"type": "string", "minLength": 2, "maxLength": 12000},
             "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
             "evidence_ranges": {
                 "type": "array",
