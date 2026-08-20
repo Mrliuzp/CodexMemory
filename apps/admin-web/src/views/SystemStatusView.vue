@@ -8,12 +8,22 @@ import CopyableText from '../components/CopyableText.vue'
 import DateTime from '../components/DateTime.vue'
 import ErrorState from '../components/ErrorState.vue'
 import PageHeader from '../components/PageHeader.vue'
+import ProjectGovernanceForm from '../components/ProjectGovernanceForm.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useVisibilityRefresh } from '../composables/useVisibilityRefresh'
+import { useContextStore } from '../stores/context'
+import { useSessionStore } from '../stores/session'
+import {
+  normalizeDecisionPolicy,
+  normalizeFeatureFlags,
+  resolveProjectKey,
+} from '../decisionPolicy'
 import { readableText } from '../utils/format'
 
 const router = useRouter()
 const route = useRoute()
+const context = useContextStore()
+const session = useSessionStore()
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref(null)
@@ -21,22 +31,15 @@ const data = ref({})
 const requestId = ref('')
 const policy = ref(null)
 const flags = ref(null)
-const configSaving = ref(false)
+const savingSection = ref('')
 const configError = ref(null)
 const codexAuthStatus = ref('error')
 const codexAuthBusy = ref(false)
-const projectKey = computed(() => String(route.query.project_key || '').trim())
-const flagDefinitions = [
-  { key: 'memory_v11_enabled', label: 'V1.1 记忆管线' },
-  { key: 'server_outbox_enabled', label: '服务端 Outbox' },
-  { key: 'lexical_retrieval_enabled', label: '词法检索' },
-  { key: 'dense_retrieval_enabled', label: '稠密检索' },
-  { key: 'embedding_profile_v2_enabled', label: 'Embedding Profile V2' },
-  { key: 'llm_shadow_enabled', label: 'LLM Shadow' },
-  { key: 'candidate_publish_enabled', label: '候选发布' },
-  { key: 'async_pipeline_v13_enabled', label: '异步管线 V1.3' },
-  { key: 'decision_engine_enabled', label: '决策引擎' },
-]
+const projectKey = computed(() => resolveProjectKey({
+  queryProjectKey: route.query.project_key,
+  contextProjectKey: context.projectKey,
+  principalProjectKey: session.me?.project_key,
+}))
 
 const migrationText = computed(() => data.value.migration_schema === 'ok' ? '结构就绪' : '需要检查')
 const decision = computed(() => data.value.decision || {})
@@ -67,19 +70,24 @@ async function refresh(manual = false) {
     requestId.value = result.request_id || ''
     await refreshCodexAuth()
     if (projectKey.value) {
-      const [policyResult, flagsResult] = await Promise.all([
+      policy.value = null
+      flags.value = null
+      const [policyResult, flagsResult] = await Promise.allSettled([
         adminGet(`/projects/${encodeURIComponent(projectKey.value)}/decision-policy`),
         adminGet(`/projects/${encodeURIComponent(projectKey.value)}/feature-flags`),
       ])
-      policy.value = policyResult.data || null
-      flags.value = flagsResult.data || null
+      const failures = []
+      if (policyResult.status === 'fulfilled') policy.value = normalizeDecisionPolicy(policyResult.value.data)
+      else failures.push(policyResult.reason)
+      if (flagsResult.status === 'fulfilled') flags.value = normalizeFeatureFlags(flagsResult.value.data)
+      else failures.push(flagsResult.reason)
+      if (failures.length) configError.value = failures[0]
     } else {
       policy.value = null
       flags.value = null
     }
   } catch (requestError) {
-    if (requestError?.status === 403 || requestError?.code === 'permission_denied') configError.value = requestError
-    else error.value = requestError
+    error.value = requestError
   } finally {
     loading.value = false
     refreshing.value = false
@@ -119,36 +127,33 @@ function recheckCodexLogin() {
   return codexAuthAction('recheck')
 }
 
-async function savePolicy() {
-  if (!policy.value || !projectKey.value) return
-  configSaving.value = true
+async function savePolicy(payload) {
+  if (!payload || !projectKey.value) return
+  savingSection.value = 'policy'
   configError.value = null
   try {
     const result = await adminPut(`/projects/${encodeURIComponent(projectKey.value)}/decision-policy`, {
-      min_confidence: Number(policy.value.min_confidence),
-      enabled: Boolean(policy.value.enabled),
-      auto_publish_enabled: Boolean(policy.value.auto_publish_enabled),
-      strategy: policy.value.strategy,
+      ...payload,
     })
-    policy.value = result.data || policy.value
+    policy.value = normalizeDecisionPolicy(result.data || policy.value)
   } catch (requestError) {
     configError.value = requestError
   } finally {
-    configSaving.value = false
+    savingSection.value = ''
   }
 }
 
-async function saveFlags() {
-  if (!flags.value?.flags || !projectKey.value) return
-  configSaving.value = true
+async function saveFlags(payload) {
+  if (!payload || !projectKey.value) return
+  savingSection.value = 'flags'
   configError.value = null
   try {
-    const result = await adminPut(`/projects/${encodeURIComponent(projectKey.value)}/feature-flags`, flags.value.flags)
-    flags.value = result.data || flags.value
+    const result = await adminPut(`/projects/${encodeURIComponent(projectKey.value)}/feature-flags`, payload)
+    flags.value = normalizeFeatureFlags(result.data || flags.value)
   } catch (requestError) {
     configError.value = requestError
   } finally {
-    configSaving.value = false
+    savingSection.value = ''
   }
 }
 
@@ -209,29 +214,16 @@ watch(projectKey, () => refresh())
         </el-descriptions>
       </section>
 
-      <section class="system-detail-card">
-        <div class="section-heading"><div><span class="eyebrow">项目治理</span><h2>决策策略与功能开关</h2></div><span class="muted">项目：{{ projectKey || '未选择' }}</span></div>
-        <el-alert v-if="!projectKey" title="请先在顶栏选择项目，才能查看或配置项目治理。" type="info" :closable="false" />
-        <template v-else>
-          <el-alert v-if="configError" title="项目配置读取或保存失败，请检查权限与服务状态。" type="error" :closable="false" show-icon />
-          <el-alert v-if="flags && !flags.initialized" title="项目功能开关记录尚未初始化，当前按关闭处理；保存前请确认迁移与项目初始化状态。" type="warning" :closable="false" show-icon />
-          <div v-if="policy" class="policy-config">
-            <div class="policy-config__row"><span>决策引擎策略</span><el-switch v-model="policy.enabled" active-text="启用" inactive-text="关闭" /></div>
-            <div class="policy-config__row"><span>自动发布</span><el-switch v-model="policy.auto_publish_enabled" active-text="启用" inactive-text="关闭" /></div>
-            <div class="policy-config__row"><span>执行模式</span><el-select v-model="policy.strategy" style="width: 180px"><el-option label="人工审核" value="manual_review" /><el-option label="自动发布（仅 L1）" value="auto_publish" /></el-select></div>
-            <div class="policy-config__row"><span>L1 置信度阈值</span><el-input-number v-model="policy.min_confidence" :min="0" :max="1" :step="0.01" :precision="2" /></div>
-            <div class="policy-config__row"><span>安全边界</span><code>L1 / project（固定）</code></div>
-            <el-button type="primary" :loading="configSaving" @click="savePolicy">保存决策策略</el-button>
-          </div>
-          <div v-if="flags" class="flag-config">
-            <div class="flag-config__head"><span>项目功能开关</span><span class="muted">Codex CLI 全局状态：{{ flags.codex_cli_enabled ? '已启用' : '未启用' }}</span></div>
-            <div class="flag-config__grid">
-              <div v-for="item in flagDefinitions" :key="item.key" class="flag-config__item"><span>{{ item.label }}</span><el-switch v-model="flags.flags[item.key]" /></div>
-            </div>
-            <el-button :loading="configSaving" @click="saveFlags">保存功能开关</el-button>
-          </div>
-        </template>
-      </section>
+      <ProjectGovernanceForm
+        :project-key="projectKey"
+        :policy="policy"
+        :flags="flags"
+        :saving-section="savingSection"
+        :error="configError"
+        :can-edit="session.isAdmin"
+        @save-policy="savePolicy"
+        @save-flags="saveFlags"
+      />
     </template>
   </section>
 </template>

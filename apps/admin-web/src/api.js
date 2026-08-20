@@ -38,6 +38,7 @@ export class AdminApiError extends Error {
     this.code = options.code || 'request_failed'
     this.meta = options.meta || {}
     this.requestId = options.requestId || ''
+    this.payload = options.payload || null
     this.cause = options.cause
   }
 }
@@ -83,6 +84,7 @@ export async function request(path, options = {}, params = {}) {
         code: payload.error?.code,
         meta: payload.error?.meta || payload.meta,
         requestId: payload.request_id || response.headers.get('x-request-id'),
+        payload,
       },
     )
     if (response.status === 401 && !options.skipUnauthorized) notifyUnauthorized(error)
