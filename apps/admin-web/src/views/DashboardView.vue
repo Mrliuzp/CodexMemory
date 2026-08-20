@@ -9,7 +9,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useVisibilityRefresh } from '../composables/useVisibilityRefresh'
 import { useSessionStore } from '../stores/session'
-import { compactNumber } from '../utils/format'
+import { compactNumber, readableText } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -41,7 +41,7 @@ const pulse = computed(() => [
 
 const pipelineSteps = computed(() => [
   { key: 'l0', label: 'L0 原始记录', value: pipeline.value.raw_records ?? dashboard.value.raw_records ?? 0, hint: '可追溯事实' },
-  { key: 'candidate', label: 'Candidate', value: pipeline.value.candidates ?? dashboard.value.candidates ?? 0, hint: '等待治理' },
+  { key: 'candidate', label: '候选记忆', value: pipeline.value.candidates ?? dashboard.value.candidates ?? 0, hint: '等待治理' },
   { key: 'l1', label: 'L1 项目知识', value: pipeline.value.l1 ?? levelCounts.value.L1 ?? levelCounts.value.l1 ?? 0, hint: '工作记忆' },
   { key: 'l2', label: 'L2 稳定知识', value: pipeline.value.l2 ?? levelCounts.value.L2 ?? levelCounts.value.l2 ?? 0, hint: '复用规则' },
   { key: 'l3', label: 'L3 错误记忆', value: pipeline.value.l3 ?? levelCounts.value.L3 ?? levelCounts.value.l3 ?? 0, hint: '防止重犯' },
@@ -112,7 +112,7 @@ onMounted(load)
       </section>
 
       <section class="dashboard-section">
-        <div class="section-heading"><div><span class="eyebrow">记忆处理链</span><h2>记忆流水线</h2></div><span class="muted">L0 → Candidate → L1 / L2 / L3</span></div>
+        <div class="section-heading"><div><span class="eyebrow">记忆处理链</span><h2>记忆流水线</h2></div><span class="muted">L0 → 候选 → L1 / L2 / L3</span></div>
         <div class="memory-pipeline">
           <template v-for="(item, index) in pipelineSteps" :key="item.key">
             <button class="pipeline-step" @click="open('/records', { kind: item.key === 'l0' ? 'raw-records' : item.key === 'candidate' ? 'candidates' : 'memories', ...(item.key.startsWith('l') && item.key !== 'l0' ? { level: item.key.toUpperCase() } : {}) })">
@@ -135,7 +135,7 @@ onMounted(load)
       <section class="dashboard-section">
         <div class="section-heading"><div><span class="eyebrow">审计轨迹</span><h2>最近审计事件</h2></div><el-button text @click="open('/records', { kind: 'audit-events' })">查看全部<el-icon><ArrowRight /></el-icon></el-button></div>
         <div v-if="audits.length" class="audit-list">
-          <button v-for="item in audits" :key="item.id" @click="open('/records', { kind: 'audit-events', detail: item.id })"><span class="audit-list__type">{{ item.event_type || '审计事件' }}</span><strong>{{ item.subject_type || '系统' }} · {{ item.subject_id || '-' }}</strong><DateTime :value="item.created_at" /></button>
+          <button v-for="item in audits" :key="item.id" @click="open('/records', { kind: 'audit-events', detail: item.id })"><span class="audit-list__type">{{ readableText(item.event_type || '审计事件') }}</span><strong>{{ readableText(item.subject_type || '系统') }} · {{ readableText(item.subject_id) }}</strong><DateTime :value="item.created_at" /></button>
         </div>
         <div v-else class="audit-list audit-list--empty">暂无审计事件</div>
       </section>

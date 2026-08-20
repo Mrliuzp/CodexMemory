@@ -10,6 +10,7 @@ import ErrorState from '../components/ErrorState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { useVisibilityRefresh } from '../composables/useVisibilityRefresh'
+import { readableText } from '../utils/format'
 
 const router = useRouter()
 const route = useRoute()
@@ -46,7 +47,7 @@ const overallStatus = computed(() => {
 })
 const checks = computed(() => [
   { label: '管理 API', status: error.value ? 'error' : 'ok', value: error.value ? '请求失败' : '响应正常', note: '当前浏览器已成功访问正式 Admin API' },
-  { label: '数据库', status: data.value.database || 'unknown', value: data.value.database === 'ok' ? '连接正常' : '连接异常', note: `数据库方言：${data.value.dialect || '未知'}` },
+  { label: '数据库', status: data.value.database || 'unknown', value: data.value.database === 'ok' ? '连接正常' : '连接异常', note: `数据库方言：${readableText(data.value.dialect || '未知')}` },
   { label: '迁移', status: data.value.migration_schema === 'ok' ? 'ok' : 'pending', value: migrationText.value, note: data.value.latest_migration || '未获取到迁移版本' },
   { label: '任务队列', status: Number(data.value.pending_jobs || 0) ? 'pending' : 'ok', value: `${data.value.pending_jobs ?? 0} 个待处理`, note: '处理任务等待 Worker 消费', to: '/records', query: { kind: 'jobs', status: 'pending' } },
   { label: 'Outbox', status: Number(data.value.server_outbox || 0) ? 'pending' : 'ok', value: `${data.value.server_outbox ?? 0} 个待投递`, note: '服务端事件等待可靠投递', to: '/records', query: { kind: 'outbox-events', status: 'pending' } },
@@ -192,7 +193,7 @@ watch(projectKey, () => refresh())
       <section class="system-detail-card">
         <div class="section-heading"><div><span class="eyebrow">运行明细</span><h2>运行信息</h2></div><span v-if="requestId" class="muted">请求 ID：<CopyableText :value="requestId" /></span></div>
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="数据库方言"><code>{{ data.dialect || '未知' }}</code></el-descriptions-item>
+          <el-descriptions-item label="数据库方言"><code>{{ readableText(data.dialect || '未知') }}</code></el-descriptions-item>
           <el-descriptions-item label="迁移版本"><CopyableText :value="data.latest_migration || '未知'" /></el-descriptions-item>
           <el-descriptions-item label="待处理任务">{{ data.pending_jobs ?? 0 }}</el-descriptions-item>
           <el-descriptions-item label="待投递 Outbox">{{ data.server_outbox ?? 0 }}</el-descriptions-item>

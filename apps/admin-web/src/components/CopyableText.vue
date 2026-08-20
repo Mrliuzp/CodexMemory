@@ -1,10 +1,11 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { Check, CopyDocument } from '@element-plus/icons-vue'
+import { formatReadableValue } from '../utils/format'
 
-const props = defineProps({ value: { type: [String, Number], default: '' }, truncate: { type: Number, default: 0 }, mono: { type: Boolean, default: true } })
+const props = defineProps({ value: { type: [Object, Array, String, Number, Boolean], default: '' }, truncate: { type: Number, default: 0 }, mono: { type: Boolean, default: true } })
 const copied = ref(false)
-const text = computed(() => String(props.value ?? ''))
+const text = computed(() => props.value !== null && typeof props.value === 'object' ? formatReadableValue(props.value) : String(props.value ?? ''))
 const shown = computed(() => props.truncate > 0 && text.value.length > props.truncate ? `${text.value.slice(0, props.truncate)}…` : text.value)
 async function copy() {
   if (!text.value) return

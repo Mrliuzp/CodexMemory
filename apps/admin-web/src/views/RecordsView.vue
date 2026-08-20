@@ -12,11 +12,12 @@ import ExpandableText from '../components/ExpandableText.vue'
 import FilterBar from '../components/FilterBar.vue'
 import PageHeader from '../components/PageHeader.vue'
 import PaginationBar from '../components/PaginationBar.vue'
+import ReadableValue from '../components/ReadableValue.vue'
 import StatusTag from '../components/StatusTag.vue'
 import StructuredDataViewer from '../components/StructuredDataViewer.vue'
 import { useRouteQuery } from '../composables/useRouteQuery'
 import { useContextStore } from '../stores/context'
-import { displayValue, localDateTimeToIso, scopeDisplayName } from '../utils/format'
+import { localDateTimeToIso, memoryTypeLabel, readableText, readableTitle, roleLabel, scopeDisplayName } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,14 +41,14 @@ const definitions = {
     ],
   },
   candidates: {
-    label: '候选记忆', hint: 'Candidate', typeLabel: '记忆类型',
+    label: '候选记忆', hint: '候选', typeLabel: '记忆类型',
     columns: [
       { key: 'id', label: 'ID', width: 84, type: 'mono' }, { key: 'title', label: '标题', minWidth: 220 }, { key: 'level', label: '层级', width: 86 },
       { key: 'memory_type', label: '记忆类型', width: 150 }, { key: 'model_confidence', label: '模型置信度', width: 112 }, { key: 'status', label: '状态', width: 112, type: 'status' }, { key: 'created_at', label: '创建时间', width: 176, type: 'date' },
     ],
   },
   memories: {
-    label: '正式记忆', hint: 'Memory', typeLabel: '记忆类型',
+    label: '正式记忆', hint: '正式', typeLabel: '记忆类型',
     columns: [
       { key: 'id', label: 'ID', width: 84, type: 'mono' }, { key: 'title', label: '标题', minWidth: 240 }, { key: 'level', label: '层级', width: 86 },
       { key: 'memory_type', label: '记忆类型', width: 150 }, { key: 'confidence', label: '置信度', width: 100 }, { key: 'status', label: '状态', width: 112, type: 'status' }, { key: 'created_at', label: '创建时间', width: 176, type: 'date' },
@@ -183,8 +184,9 @@ onMounted(async () => {
   <template v-else>
     <DataTable :rows="rows" :columns="definition.columns" :loading="loading" :empty-title="`暂无${definition.label}`" empty-description="当前筛选条件下没有数据。" @row-click="openDetail">
       <template #cell-content="{ value }"><ExpandableText :value="value" /></template>
-      <template #cell-title="{ row, value }"><div class="record-title"><strong>{{ value || '未命名记录' }}</strong><small v-if="row.content">{{ String(row.content).slice(0, 80) }}</small></div></template>
-      <template #cell-role="{ value }"><StatusTag :status="value" :label="({ user: '用户', assistant: '助手', system: '系统' })[value] || value" /></template>
+      <template #cell-title="{ row }"><div class="record-title"><strong>{{ readableTitle(row) }}</strong><small v-if="row.content">{{ readableText(row.content, 80) }}</small></div></template>
+      <template #cell-role="{ value }"><StatusTag :status="value" :label="roleLabel(value)" /></template>
+      <template #cell-memory_type="{ value }">{{ memoryTypeLabel(value) }}</template>
       <template #cell-degraded="{ value }"><StatusTag :status="value ? 'degraded' : 'ok'" :label="value ? '已降级' : '正常'" /></template>
       <template #cell-model_confidence="{ value }">{{ value == null ? '-' : `${Math.round(Number(value) * 100)}%` }}</template>
       <template #cell-confidence="{ value }">{{ value == null ? '-' : `${Math.round(Number(value) * 100)}%` }}</template>
@@ -196,10 +198,13 @@ onMounted(async () => {
   <DetailDrawer v-model="drawerOpen" :title="`${definition.label}详情`">
     <template v-if="currentRow">
       <el-tabs :model-value="filters.detail_tab" @tab-change="(value) => commit({ detail_tab: value })"><el-tab-pane label="概览" name="overview" /><el-tab-pane label="原始数据" name="raw" /></el-tabs>
-      <el-descriptions v-if="filters.detail_tab === 'overview'" :column="1" border>
-        <el-descriptions-item v-for="column in definition.columns" :key="column.key" :label="column.label"><DateTime v-if="column.type === 'date'" :value="currentRow[column.key]" /><StatusTag v-else-if="column.type === 'status'" :status="currentRow[column.key]" /><ExpandableText v-else-if="column.key === 'content'" :value="currentRow[column.key]" :limit="360" /><CopyableText v-else-if="column.type === 'mono'" :value="currentRow[column.key]" /><span v-else>{{ displayValue(currentRow[column.key]) }}</span></el-descriptions-item>
-      </el-descriptions>
-      <StructuredDataViewer v-else :value="currentRow" title="完整结构化数据" open />
+      <template v-if="filters.detail_tab === 'overview'">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item v-for="column in definition.columns" :key="column.key" :label="column.label"><DateTime v-if="column.type === 'date'" :value="currentRow[column.key]" /><StatusTag v-else-if="column.type === 'status'" :status="currentRow[column.key]" /><ExpandableText v-else-if="column.key === 'content'" :value="currentRow[column.key]" :limit="360" /><CopyableText v-else-if="column.type === 'mono'" :value="currentRow[column.key]" /><ReadableValue v-else :value="currentRow[column.key]" /></el-descriptions-item>
+        </el-descriptions>
+        <StructuredDataViewer :value="currentRow" title="查看原始数据" />
+      </template>
+      <StructuredDataViewer v-else :value="currentRow" title="查看原始数据" />
     </template>
     <p v-else class="muted">该记录不在当前页，请关闭详情后重新定位。</p>
   </DetailDrawer>

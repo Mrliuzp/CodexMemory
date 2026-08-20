@@ -142,7 +142,9 @@ code { padding: 2px 5px; border-radius: 5px; background: var(--mist); color: var
 .resource-tab-label { display: inline-flex; align-items: center; gap: 7px; }
 .resource-tab-label small { color: #829692; font-family: var(--mono); font-size: 9px; }
 .redaction-notice { margin-bottom: 14px; }
-.expandable-text p { max-width: 720px; margin: 0; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.expandable-text__content { max-width: 720px; line-height: 1.6; word-break: break-word; }
+.expandable-text__content p { margin: 0; white-space: pre-wrap; }
+.expandable-text__content ul { margin: 0; padding-left: 18px; }
 .expandable-text__actions { display: flex; align-items: center; gap: 3px; margin-top: 3px; }
 .expandable-text__actions .copyable-text > span { display: none; }
 .record-title strong, .record-title small { display: block; }
@@ -164,8 +166,16 @@ code { padding: 2px 5px; border-radius: 5px; background: var(--mist); color: var
 .detail-drawer__body { min-height: 180px; }
 .confirm-dialog__body { display: grid; gap: 16px; }
 .impact-box { padding: 13px 15px; border: 1px solid #ead2a9; border-radius: 8px; background: #fff9ed; color: #76521d; line-height: 1.6; }
+.readable-value { color: #344d54; line-height: 1.65; word-break: break-word; }
+.readable-value p { margin: 0; }
+.readable-value ul { margin: 0; padding-left: 18px; }
+.readable-value li + li { margin-top: 3px; }
 .structured-viewer { border: 1px solid var(--line); border-radius: 8px; background: #f8fbfa; }
+.structured-viewer__readable { padding: 14px; }
 .structured-viewer summary { padding: 12px 14px; color: var(--memory-dark); font-weight: 650; cursor: pointer; }
+.structured-viewer__actions { display: flex; justify-content: flex-end; padding: 8px 14px; border-top: 1px solid var(--line); }
+.structured-viewer__copy { padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--paper); color: var(--memory-dark); font: inherit; font-size: 12px; cursor: pointer; }
+.structured-viewer__copy:hover { border-color: var(--memory); background: #eef7f4; }
 .structured-viewer pre { max-height: 460px; margin: 0; padding: 16px; overflow: auto; border-top: 1px solid var(--line); color: #365057; font-size: 12px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
 .safe-markdown { color: #344d54; line-height: 1.75; }
 .safe-markdown h2, .safe-markdown h3, .safe-markdown h4, .safe-markdown h5 { margin: 1.4em 0 .6em; color: var(--ink); }

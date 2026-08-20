@@ -34,7 +34,7 @@ export function renderSafeMarkdown(source) {
       output.push(`<h${level}>${inline(heading[2])}</h${level}>`)
       continue
     }
-    const item = line.match(/^[-*]\s+(.+)$/)
+    const item = line.match(/^\s*[-*]\s+(.+)$/)
     if (item) {
       if (!inList) { output.push('<ul>'); inList = true }
       output.push(`<li>${inline(item[1])}</li>`)

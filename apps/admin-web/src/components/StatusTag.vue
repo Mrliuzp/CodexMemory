@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { statusMeta } from '../utils/format'
 
-const props = defineProps({ status: { type: [String, Boolean], default: 'unknown' }, label: { type: String, default: '' }, size: { type: String, default: 'small' } })
+const props = defineProps({ status: { type: [Object, String, Boolean], default: 'unknown' }, label: { type: String, default: '' }, size: { type: String, default: 'small' } })
 const meta = computed(() => statusMeta(props.status === true ? 'ok' : props.status === false ? 'error' : props.status, props.label))
 </script>
 
