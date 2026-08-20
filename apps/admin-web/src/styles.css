@@ -312,6 +312,11 @@ code { padding: 2px 5px; border-radius: 5px; background: var(--mist); color: var
 .policy-config__row > span, .flag-config__head > span:first-child { color: var(--muted); font-weight: 650; }
 .flag-config__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .flag-config__item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px; background: #f8fbfa; color: var(--ink-soft); font-size: 12px; }
+.config-note { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.config-debug { margin-top: 12px; color: var(--muted); font-size: 12px; }
+.config-debug summary { cursor: pointer; }
+.config-debug pre { max-height: 220px; margin: 8px 0 0; padding: 12px; overflow: auto; border-radius: 8px; background: #f6f9f8; color: #52676c; white-space: pre-wrap; word-break: break-word; }
+.config-empty { margin-top: 18px; }
 .status-table { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
 .status-table > div { min-height: 56px; display: grid; grid-template-columns: 190px minmax(0, 1fr) 110px; align-items: center; gap: 16px; padding: 0 18px; border-bottom: 1px solid #e9efed; }
 .status-table > div:last-child { border-bottom: 0; }

@@ -42,4 +42,20 @@ describe('管理 API 客户端', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network down')))
     await expect(adminGet('/dashboard')).rejects.toMatchObject({ code: 'network_error', message: '无法连接管理 API，请检查服务状态后重试。' })
   })
+
+  it('保留后端 422 的中文原因，并把原始响应放入调试字段', async () => {
+    const payload = {
+      error: { code: 'decision_policy_invalid', message: '决策策略无效：未启用自动发布时不能选择自动发布模式' },
+      request_id: 'req-422',
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(422, payload)))
+
+    await expect(adminGet('/projects/demo/decision-policy')).rejects.toMatchObject({
+      status: 422,
+      code: 'decision_policy_invalid',
+      message: '决策策略无效：未启用自动发布时不能选择自动发布模式',
+      requestId: 'req-422',
+      payload,
+    })
+  })
 })
