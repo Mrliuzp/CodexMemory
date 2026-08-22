@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { adminGet, adminPost, adminPut, getErrorMessage } from '../api'
+import { getCodexAuthStatusMessage } from '../codexAuthStatus'
 import CodexAuthCard from '../components/CodexAuthCard.vue'
 import CopyableText from '../components/CopyableText.vue'
 import DateTime from '../components/DateTime.vue'
@@ -126,9 +127,10 @@ async function codexAuthAction(action) {
     codexAuthReason.value = result.data?.reason || ''
     codexAuthMessage.value = result.data?.message || ''
     const actionLabel = { start: '开始登录', cancel: '取消登录', recheck: '重新检查' }[action] || '操作'
+    const feedbackMessage = getCodexAuthStatusMessage(codexAuthStatus.value, codexAuthReason.value, codexAuthMessage.value)
     codexAuthFeedback.value = {
       type: codexAuthStatus.value === 'error' ? 'error' : 'success',
-      message: `${actionLabel}：${codexAuthMessage.value || '操作已完成。'}`,
+      message: `${actionLabel}：${feedbackMessage}`,
       requestId: result.request_id || '',
     }
   } catch (requestError) {
