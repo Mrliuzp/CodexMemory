@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -33,6 +34,9 @@ from .v11_decision import (
     resolve_l1_auto_publish_threshold,
 )
 from .v11_decision_policy import CandidateDecisionPolicy, DecisionPolicyProvider, SqlDecisionPolicyProvider
+from ..persistence.db_models import MemoryVersionRow
+from ..persistence.v17_models import MemoryChangeSetRow, MemoryWindowMessageRow, MemoryWindowRow, ProjectMemoryWindowPolicyRow
+from ..v17_models import MemoryChangeSetOutput
 
 
 class CandidatePolicyService:
@@ -58,6 +62,134 @@ class CandidatePolicyService:
         )
         self.policy_provider = policy_provider or SqlDecisionPolicyProvider(session_factory)
 
+    def apply_window_change_set(self, change_set_id: int, *, reviewer: str, reason: str = "人工审核通过") -> MemoryRow | None:
+        """仅应用已人工批准且重新通过证据/版本校验的 V1.7 ChangeSet。"""
+        with self.session_factory() as session:
+            change_set = session.scalar(select(MemoryChangeSetRow).where(MemoryChangeSetRow.id == change_set_id).with_for_update())
+            if change_set is None:
+                raise LookupError("ChangeSet 不存在")
+            if change_set.status == "applied":
+                return session.get(MemoryRow, change_set.applied_memory_id) if change_set.applied_memory_id else None
+            if change_set.status != "approved":
+                raise ValueError("ChangeSet 尚未人工批准")
+            policy = session.get(ProjectMemoryWindowPolicyRow, change_set.project_id)
+            if policy is None or not policy.enabled or not policy.manual_apply_enabled or policy.mode != "shadow":
+                raise ValueError("V1.7 人工应用未启用")
+            window = session.get(MemoryWindowRow, change_set.window_id)
+            project = session.get(ProjectRow, change_set.project_id)
+            if window is None or project is None or window.project_id != change_set.project_id or window.status not in {"sealed", "processing", "completed"}:
+                raise ValueError("ChangeSet 项目或窗口无效")
+            if window.input_hash != change_set.input_hash:
+                raise ValueError("窗口 input_hash 已漂移")
+            output = MemoryChangeSetOutput.model_validate(change_set.output_json)
+            messages = session.scalars(select(MemoryWindowMessageRow).where(MemoryWindowMessageRow.window_id == window.id)).all()
+            allowed_ids = {item.message_id for item in messages}
+            for evidence in output.evidence_ranges:
+                if evidence.message_id not in allowed_ids:
+                    raise ValueError("证据不属于当前窗口")
+                message = session.get(MessageRow, evidence.message_id)
+                if message is None or message.project_id != project.id or hashlib.sha256(message.content.encode("utf-8")).hexdigest() != message.content_hash or message.content[evidence.start_char:evidence.end_char] != evidence.quote:
+                    raise ValueError("证据已漂移或不属于项目")
+            if output.operation == "no_change":
+                change_set.status = "applied"
+                change_set.reviewer = reviewer[:255]
+                change_set.review_reason = reason[:2000]
+                change_set.reviewed_at = datetime.now(timezone.utc)
+                session.commit()
+                return None
+            if output.operation == "create":
+                canonical = json.dumps(output.content or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                existing_memories = session.scalars(select(MemoryRow).where(
+                    MemoryRow.project_id == project.id,
+                    MemoryRow.level == "L1",
+                    MemoryRow.scope == "project",
+                    MemoryRow.status == "published",
+                    MemoryRow.deprecated.is_(False),
+                )).all()
+                if any(json.dumps(item.content or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")) == canonical for item in existing_memories):
+                    raise ValueError("create 与现有 L1 重复")
+            target = None
+            if output.operation == "update":
+                if output.target_memory_id not in output.retrieved_memory_ids:
+                    raise ValueError("update target 必须出现在检索目标中")
+                target = session.scalar(select(MemoryRow).where(MemoryRow.id == output.target_memory_id, MemoryRow.project_id == project.id, MemoryRow.level == "L1", MemoryRow.scope == "project").with_for_update())
+                if target is None or int(getattr(target, "revision", 1)) != output.target_revision:
+                    raise ValueError("target memory 或 revision 冲突")
+                # 旧数据可能没有完整 v1 快照。先在同一事务中补齐当前状态，
+                # 再写新版本，确保更新历史可审计且不依赖迁移期全表扫描。
+                current_revision = int(getattr(target, "revision", 1))
+                snapshot = session.scalar(
+                    select(MemoryVersionRow)
+                    .where(MemoryVersionRow.memory_id == target.id, MemoryVersionRow.version == current_revision)
+                    .order_by(MemoryVersionRow.id)
+                )
+                if snapshot is None:
+                    session.add(MemoryVersionRow(
+                        memory_id=target.id,
+                        version=current_revision,
+                        content=dict(target.content or {}),
+                        title=target.title,
+                        level=target.level,
+                        memory_type=target.memory_type,
+                        scope=target.scope,
+                        scope_id=target.scope_id,
+                        confidence=target.confidence,
+                        status=target.status,
+                        deprecated=target.deprecated,
+                        content_hash=hashlib.sha256(json.dumps(target.content or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
+                    ))
+                elif snapshot.title is None or snapshot.level is None or snapshot.memory_type is None or snapshot.scope is None or snapshot.content_hash is None:
+                    # 已存在的旧快照也必须补成完整状态；不重复插入同一版本。
+                    snapshot.content = dict(target.content or {})
+                    snapshot.title = target.title
+                    snapshot.level = target.level
+                    snapshot.memory_type = target.memory_type
+                    snapshot.scope = target.scope
+                    snapshot.scope_id = target.scope_id
+                    snapshot.confidence = target.confidence
+                    snapshot.status = target.status
+                    snapshot.deprecated = target.deprecated
+                    snapshot.content_hash = hashlib.sha256(json.dumps(target.content or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            content = dict(output.content or {})
+            content_text = json.dumps(content, ensure_ascii=False, sort_keys=True)
+            if any(evidence.quote not in content_text for evidence in output.evidence_ranges):
+                raise ValueError("证据未被 ChangeSet 内容引用")
+            content_hash = hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            if target is None:
+                target = MemoryRow(project_id=project.id, level="L1", scope="project", memory_type="conversation", title=output.title, content=content, confidence=output.confidence or 0.0, status="published", review_status="accepted", source_kind="rule", revision=1)
+                session.add(target)
+                session.flush()
+                version = 1
+            else:
+                version = int(getattr(target, "revision", 1)) + 1
+                target.title = output.title
+                target.content = content
+                target.confidence = output.confidence or 0.0
+                target.status = "published"
+                target.revision = version
+            for evidence in output.evidence_ranges:
+                exists = session.scalar(select(MemorySourceRow).where(MemorySourceRow.memory_id == target.id, MemorySourceRow.message_id == evidence.message_id))
+                if exists is None:
+                    session.add(MemorySourceRow(memory_id=target.id, message_id=evidence.message_id))
+            existing_version = session.scalar(
+                select(MemoryVersionRow)
+                .where(MemoryVersionRow.memory_id == target.id, MemoryVersionRow.version == version)
+                .order_by(MemoryVersionRow.id)
+            )
+            if existing_version is None:
+                session.add(MemoryVersionRow(memory_id=target.id, version=version, content=content, title=target.title, level=target.level, memory_type=target.memory_type, scope=target.scope, scope_id=target.scope_id, confidence=target.confidence, status=target.status, deprecated=target.deprecated, content_hash=content_hash, source_change_set_id=change_set.id))
+            elif existing_version.source_change_set_id not in (None, change_set.id):
+                raise ValueError("目标 Memory 版本已被其他 ChangeSet 占用")
+            change_set.status = "applied"
+            change_set.applied_memory_id = target.id
+            change_set.reviewer = reviewer[:255]
+            change_set.review_reason = reason[:2000]
+            change_set.reviewed_at = datetime.now(timezone.utc)
+            session.commit()
+            session.refresh(target)
+            session.expunge(target)
+            return target
+
     def create_candidate(
         self,
         *,
@@ -70,7 +202,7 @@ class CandidatePolicyService:
         title: str,
         content: dict[str, Any],
         evidence: list[tuple[int, int, int]],
-    ) -> MemoryCandidateRow:
+        ) -> MemoryCandidateRow:
         if scope not in {"project", "global"}:
             raise ValueError("scope 必须是 project 或 global")
         if level not in {"L1", "L2", "L3"}:
@@ -799,5 +931,9 @@ class CandidatePolicyService:
         session.flush()
         return event.id
 
+def apply_window_change_set(session_factory: sessionmaker[Session], change_set_id: int, *, reviewer: str, reason: str = "人工审核通过") -> MemoryRow | None:
+    """受限的 V1.7 人工应用函数入口。"""
+    return CandidatePolicyService(session_factory).apply_window_change_set(change_set_id, reviewer=reviewer, reason=reason)
 
-__all__ = ["CandidatePolicyService"]
+
+__all__ = ["CandidatePolicyService", "apply_window_change_set"]

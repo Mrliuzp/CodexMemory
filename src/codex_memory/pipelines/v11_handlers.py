@@ -12,6 +12,9 @@ from .v11_flags import DEFAULT_FEATURE_FLAG_VALUES, ensure_project_feature_flags
 from .v11_decision import CandidateDecisionError, CandidateDecisionModel, CandidateDecisionWorker
 from .v11_worker import JobClaim
 from .v13_handlers import ErrorClassification, HandlerContext, HandlerResult
+from ..persistence.v17_models import ProjectMemoryWindowPolicyRow
+from ..v17_windows import MemoryWindowService
+from ..v17_changes import MemoryChangeSetService
 
 
 class PermanentJobError(Exception):
@@ -54,6 +57,7 @@ class V11JobHandlers:
             "parse_document",
             "chunk_document",
             "task.event.received.v1",
+            "memory.window.seal_requested.v1",
         }:
             raise PermanentJobError(f"不支持的任务类型：{claim.job_type}")
         if claim.job_type in {"candidate.decision.requested.v1", "decide_candidate"}:
@@ -68,6 +72,9 @@ class V11JobHandlers:
             return HandlerResult()
         if claim.job_type in {"message.appended.v1", "memory.candidate_requested.v1", "extract_memory_candidate"}:
             self._handle_candidate_request(claim.payload)
+            return HandlerResult()
+        if claim.job_type == "memory.window.seal_requested.v1":
+            self._handle_window_seal(claim.payload)
             return HandlerResult()
         if claim.job_type in {"memory.embedding_requested.v1", "generate_embedding"}:
             self._handle_embedding_request(claim.payload)
@@ -113,6 +120,14 @@ class V11JobHandlers:
             message = session.get(MessageRow, message_id)
             if message is None or message.project_id != project_id:
                 raise PermanentJobError("message does not belong to project")
+            window_policy = session.get(ProjectMemoryWindowPolicyRow, project_id)
+            if window_policy is not None and window_policy.enabled:
+                MemoryWindowService(self.session_factory).append_message(
+                    project_id=project_id,
+                    session_id=message.session_id,
+                    message_id=message.id,
+                )
+                return
             flags, initialized = ensure_project_feature_flags(session, project_id)
             if initialized:
                 session.add(
@@ -153,6 +168,26 @@ class V11JobHandlers:
             content={"text": message.content, "source": "message.appended.v1"},
             evidence=[(message_id, 0, len(message.content))],
         )
+
+    def _handle_window_seal(self, payload: dict[str, Any]) -> None:
+        try:
+            project_id = int(payload["project_id"])
+            if "session_id" in payload:
+                session_id = int(payload["session_id"])
+            else:
+                from ..persistence.db_models import SessionRow
+                with self.session_factory() as session:
+                    conversation = session.scalar(select(SessionRow).where(SessionRow.project_id == project_id, SessionRow.session_key == str(payload["session_key"])))
+                    if conversation is None:
+                        raise LookupError("会话不存在")
+                    session_id = conversation.id
+            MemoryChangeSetService(self.session_factory).seal_and_generate(
+                project_id=project_id,
+                session_id=session_id,
+                sealed_by=str(payload.get("sealed_by", "worker")),
+            )
+        except (KeyError, LookupError, ValueError) as error:
+            raise PermanentJobError(str(error)) from error
 
     def _handle_embedding_request(self, payload: dict[str, Any]) -> None:
         try:

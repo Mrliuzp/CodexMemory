@@ -274,7 +274,14 @@ def test_admin_me_dashboard_and_projects_are_project_scoped(admin_experience: tu
 def test_codex_auth_status_is_readable_and_actions_are_admin_only(
     admin_experience: tuple[TestClient, Any, dict[str, int]], monkeypatch
 ) -> None:
-    from codex_memory.codex_auth import AUTH_STATUS_LOGIN_IN_PROGRESS, AUTH_STATUS_NOT_LOGGED_IN, AUTH_STATUS_READY, CodexAuthCoordinatorClient
+    from codex_memory.codex_auth import (
+        AUTH_STATUS_LOGIN_IN_PROGRESS,
+        AUTH_STATUS_NOT_LOGGED_IN,
+        AUTH_STATUS_READY,
+        CodexAuthCoordinatorClient,
+        CodexAuthStatus,
+        describe_auth_status,
+    )
 
     class FakeCoordinator:
         def __init__(self) -> None:
@@ -282,6 +289,9 @@ def test_codex_auth_status_is_readable_and_actions_are_admin_only(
 
         def status(self) -> str:
             return self.status_value
+
+        def status_detail(self) -> CodexAuthStatus:
+            return describe_auth_status(self.status_value)
 
         def start_login(self) -> str:
             self.status_value = AUTH_STATUS_LOGIN_IN_PROGRESS

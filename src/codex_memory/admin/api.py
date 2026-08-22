@@ -26,6 +26,15 @@ from ..api_operations import MAX_DOCUMENT_BYTES
 from ..config import is_placeholder_value
 from ..codex_auth import CodexAuthCoordinatorClient, CodexAuthCoordinatorError, CodexAuthStatus, describe_auth_status
 from ..persistence.v15_models import ContractRevisionRow, ContractServiceRow
+from ..persistence.v17_models import (
+    MemoryChangeSetRow,
+    MemoryWindowMessageRow,
+    MemoryWindowRow,
+    ProjectMemoryWindowPolicyRow,
+)
+from ..v17_changes import MemoryChangeSetService
+from ..v17_windows import MemoryWindowService
+from ..pipelines.v11_candidates import CandidatePolicyService
 
 SORT_FIELDS = {
     "created_at",
@@ -449,6 +458,23 @@ class ContractServiceCreateRequest(BaseModel):
 
 class ContractPublishRequest(BaseModel):
     expected_content_hash: str
+
+
+class MemoryWindowPolicyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    manual_apply_enabled: bool | None = None
+    max_messages: int | None = Field(default=None, ge=1, le=10000)
+    max_input_chars: int | None = Field(default=None, ge=1, le=2_000_000)
+    updated_by: str = Field(default="admin", min_length=1, max_length=255)
+
+
+class MemoryChangeSetReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=1, max_length=2000)
 
 def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
     router = APIRouter(prefix="/api/admin/v1", tags=["admin-v1"])
@@ -896,6 +922,220 @@ def create_admin_router(session_factory: sessionmaker[Session]) -> APIRouter:
             },
             "request_id": _request_id(request),
         }
+
+    # V1.7 管理接口只做项目归属校验和服务编排；所有写入必须委托给核心服务。
+    v17_windows = MemoryWindowService(session_factory)
+    v17_changes = MemoryChangeSetService(session_factory)
+
+    def _require_v17_admin(request: Request, current: Principal) -> None:
+        try:
+            require_permission(current, "admin")
+        except PermissionDenied as error:
+            raise _error(request, "permission_denied", "需要管理员权限", status.HTTP_403_FORBIDDEN) from error
+
+    def _v17_policy_payload(project: ProjectRow, row: ProjectMemoryWindowPolicyRow) -> dict[str, Any]:
+        return {
+            "project_id": project.id,
+            "project_key": project.project_key,
+            "enabled": bool(row.enabled),
+            "mode": row.mode,
+            "manual_apply_enabled": bool(row.manual_apply_enabled),
+            "max_messages": row.max_messages,
+            "max_input_chars": row.max_input_chars,
+            "policy_version": row.policy_version,
+            "updated_by": row.updated_by,
+            "created_at": _row_value(row, "created_at"),
+            "updated_at": _row_value(row, "updated_at"),
+        }
+
+    def _v17_window_payload(row: MemoryWindowRow, *, message_count: int = 0) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "project_id": row.project_id,
+            "session_id": row.session_id,
+            "session_key": row.session_key,
+            "status": row.status,
+            "input_hash": row.input_hash,
+            "sealed_at": _row_value(row, "sealed_at"),
+            "sealed_by": row.sealed_by,
+            "message_count": message_count,
+            "created_at": _row_value(row, "created_at"),
+            "updated_at": _row_value(row, "updated_at"),
+        }
+
+    def _v17_change_set_payload(row: MemoryChangeSetRow) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "project_id": row.project_id,
+            "window_id": row.window_id,
+            "decision_run_id": row.decision_run_id,
+            "operation": row.operation,
+            "target_memory_id": row.target_memory_id,
+            "target_revision": row.target_revision,
+            "status": row.status,
+            "output": _redact(row.output_json),
+            "input_hash": row.input_hash,
+            "reviewer": row.reviewer,
+            "review_reason": row.review_reason,
+            "reviewed_at": _row_value(row, "reviewed_at"),
+            "applied_memory_id": row.applied_memory_id,
+            "created_at": _row_value(row, "created_at"),
+            "updated_at": _row_value(row, "updated_at"),
+        }
+
+    @router.get("/projects/{project_key}/memory-window-policy")
+    def get_memory_window_policy(project_key: str, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        try:
+            policy = v17_windows.get_policy(project.id)
+        except Exception as error:
+            raise _error(request, "memory_window_policy_unavailable", "V1.7 策略暂不可用", status.HTTP_503_SERVICE_UNAVAILABLE) from error
+        return {"data": _v17_policy_payload(project, policy), "request_id": _request_id(request)}
+
+    @router.put("/projects/{project_key}/memory-window-policy")
+    def update_memory_window_policy(project_key: str, payload: MemoryWindowPolicyUpdateRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        changes = payload.model_dump(exclude_none=True)
+        try:
+            policy = v17_windows.update_policy(project.id, **changes)
+        except ValueError as error:
+            raise _error(request, "memory_window_policy_invalid", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        except Exception as error:
+            raise _error(request, "memory_window_policy_unavailable", "V1.7 策略暂不可用", status.HTTP_503_SERVICE_UNAVAILABLE) from error
+        return {"data": _v17_policy_payload(project, policy), "request_id": _request_id(request)}
+
+    @router.get("/projects/{project_key}/memory-windows")
+    def list_memory_windows(
+        project_key: str,
+        request: Request,
+        status_filter: str | None = Query(default=None, alias="status"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=200),
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        with session_factory() as session:
+            query = select(MemoryWindowRow).where(MemoryWindowRow.project_id == project.id)
+            if status_filter:
+                query = query.where(MemoryWindowRow.status == status_filter.strip())
+            total = int(session.scalar(select(func.count()).select_from(query.subquery())) or 0)
+            rows = list(session.scalars(query.order_by(MemoryWindowRow.created_at.desc(), MemoryWindowRow.id.desc()).offset((page - 1) * page_size).limit(page_size)).all())
+            counts = {int(row.id): int(session.scalar(select(func.count()).select_from(MemoryWindowMessageRow).where(MemoryWindowMessageRow.window_id == row.id)) or 0) for row in rows}
+            data = [_v17_window_payload(row, message_count=counts[row.id]) for row in rows]
+        return _page(data, total, page, page_size, _request_id(request))
+
+    @router.get("/projects/{project_key}/memory-windows/{window_id}")
+    def get_memory_window(project_key: str, window_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        with session_factory() as session:
+            row = session.scalar(select(MemoryWindowRow).where(MemoryWindowRow.id == window_id, MemoryWindowRow.project_id == project.id))
+            if row is None:
+                raise _error(request, "memory_window_not_found", "Memory Window 不存在", status.HTTP_404_NOT_FOUND)
+            messages = session.scalars(select(MemoryWindowMessageRow).where(MemoryWindowMessageRow.window_id == row.id).order_by(MemoryWindowMessageRow.position, MemoryWindowMessageRow.id)).all()
+            data = _v17_window_payload(row, message_count=len(messages))
+            data["messages"] = [{"id": item.id, "message_id": item.message_id, "position": item.position, "content_hash": item.content_hash} for item in messages]
+        return {"data": data, "request_id": _request_id(request)}
+
+    @router.post("/projects/{project_key}/memory-windows/{session_id}/seal")
+    def seal_memory_window(project_key: str, session_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        try:
+            change_set = v17_changes.seal_and_generate(project_id=project.id, session_id=session_id, sealed_by=current.display_name or "admin")
+            with session_factory() as session:
+                window = session.get(MemoryWindowRow, change_set.window_id)
+                message_count = int(session.scalar(select(func.count()).select_from(MemoryWindowMessageRow).where(MemoryWindowMessageRow.window_id == change_set.window_id)) or 0)
+            if window is None:
+                raise LookupError("Memory Window 不存在")
+        except LookupError as error:
+            raise _error(request, "memory_window_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+        except ValueError as error:
+            raise _error(request, "memory_window_seal_invalid", str(error), status.HTTP_422_UNPROCESSABLE_ENTITY) from error
+        except Exception as error:
+            raise _error(request, "memory_window_generation_failed", "Memory Window 生成失败，请稍后重试", status.HTTP_503_SERVICE_UNAVAILABLE) from error
+        return {"data": {"window": _v17_window_payload(window, message_count=message_count), "change_set": _v17_change_set_payload(change_set)}, "request_id": _request_id(request)}
+
+    def _v17_change_set_for_project(request: Request, project: ProjectRow, change_set_id: int) -> MemoryChangeSetRow:
+        with session_factory() as session:
+            row = session.scalar(select(MemoryChangeSetRow).where(MemoryChangeSetRow.id == change_set_id, MemoryChangeSetRow.project_id == project.id))
+            if row is None:
+                raise _error(request, "memory_change_set_not_found", "ChangeSet 不存在", status.HTTP_404_NOT_FOUND)
+            session.expunge(row)
+            return row
+
+    @router.get("/projects/{project_key}/memory-change-sets")
+    def list_memory_change_sets(
+        project_key: str,
+        request: Request,
+        status_filter: str | None = Query(default=None, alias="status"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=200),
+        current: Principal = Depends(principal),
+    ) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        with session_factory() as session:
+            query = select(MemoryChangeSetRow).where(MemoryChangeSetRow.project_id == project.id)
+            if status_filter:
+                query = query.where(MemoryChangeSetRow.status == status_filter.strip())
+            total = int(session.scalar(select(func.count()).select_from(query.subquery())) or 0)
+            rows = session.scalars(query.order_by(MemoryChangeSetRow.created_at.desc(), MemoryChangeSetRow.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+            data = [_v17_change_set_payload(row) for row in rows]
+        return _page(data, total, page, page_size, _request_id(request))
+
+    @router.get("/projects/{project_key}/memory-change-sets/{change_set_id}")
+    def get_memory_change_set(project_key: str, change_set_id: int, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        return {"data": _v17_change_set_payload(_v17_change_set_for_project(request, project, change_set_id)), "request_id": _request_id(request)}
+
+    def _review_memory_change_set(project_key: str, change_set_id: int, payload: MemoryChangeSetReviewRequest, request: Request, current: Principal, action: str) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        row = _v17_change_set_for_project(request, project, change_set_id)
+        desired = "approved" if action == "approve" else "rejected"
+        if row.status == desired:
+            return {"data": {**_v17_change_set_payload(row), "idempotent": True}, "request_id": _request_id(request)}
+        if row.status != "shadow":
+            raise _error(request, "memory_change_set_review_conflict", "ChangeSet 已完成其他审核，不能重复审核", status.HTTP_409_CONFLICT)
+        try:
+            reviewed = v17_changes.approve(change_set_id, reviewer=payload.reviewer, reason=payload.reason) if action == "approve" else v17_changes.reject(change_set_id, reviewer=payload.reviewer, reason=payload.reason)
+        except LookupError as error:
+            raise _error(request, "memory_change_set_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+        except ValueError as error:
+            raise _error(request, "memory_change_set_review_invalid", str(error), status.HTTP_409_CONFLICT) from error
+        return {"data": {**_v17_change_set_payload(reviewed), "idempotent": False}, "request_id": _request_id(request)}
+
+    @router.post("/projects/{project_key}/memory-change-sets/{change_set_id}/approve")
+    def approve_memory_change_set(project_key: str, change_set_id: int, payload: MemoryChangeSetReviewRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        return _review_memory_change_set(project_key, change_set_id, payload, request, current, "approve")
+
+    @router.post("/projects/{project_key}/memory-change-sets/{change_set_id}/reject")
+    def reject_memory_change_set(project_key: str, change_set_id: int, payload: MemoryChangeSetReviewRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        return _review_memory_change_set(project_key, change_set_id, payload, request, current, "reject")
+
+    @router.post("/projects/{project_key}/memory-change-sets/{change_set_id}/apply")
+    def apply_memory_change_set(project_key: str, change_set_id: int, payload: MemoryChangeSetReviewRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:
+        _require_v17_admin(request, current)
+        project = project_context(request, project_key, None, current, access_error_code="permission_denied", strict_access=True)
+        row = _v17_change_set_for_project(request, project, change_set_id)
+        if row.status == "applied":
+            return {"data": {**_v17_change_set_payload(row), "idempotent": True}, "request_id": _request_id(request)}
+        try:
+            # Memory 的新增、更新和版本校验全部由 CandidatePolicyService 执行。
+            CandidatePolicyService(session_factory).apply_window_change_set(change_set_id, reviewer=payload.reviewer, reason=payload.reason)
+            applied = _v17_change_set_for_project(request, project, change_set_id)
+        except LookupError as error:
+            raise _error(request, "memory_change_set_not_found", str(error), status.HTTP_404_NOT_FOUND) from error
+        except ValueError as error:
+            raise _error(request, "memory_change_set_apply_invalid", str(error), status.HTTP_409_CONFLICT) from error
+        except Exception as error:
+            raise _error(request, "memory_change_set_apply_failed", "ChangeSet 应用失败，请稍后重试", status.HTTP_503_SERVICE_UNAVAILABLE) from error
+        return {"data": {**_v17_change_set_payload(applied), "idempotent": False}, "request_id": _request_id(request)}
 
     @router.post("/contract-services")
     def create_contract_service(payload: ContractServiceCreateRequest, request: Request, current: Principal = Depends(principal)) -> dict[str, Any]:

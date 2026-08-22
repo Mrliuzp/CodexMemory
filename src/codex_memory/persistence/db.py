@@ -8,6 +8,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from .db_models import Base
+from .v17_models import V17Base
 
 
 def create_engine_from_url(database_url: str) -> Engine:
@@ -59,3 +60,7 @@ def _cleanup_test_databases() -> None:
 
 def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
+    # V1.7 使用独立元数据以保持迁移/启动边界，但测试及本地无迁移路径
+    # 仍需具备其表结构。策略默认关闭，未写入策略行时旧 V1.1/V1.3
+    # 逐消息路径保持原有语义。
+    V17Base.metadata.create_all(engine)

@@ -84,6 +84,7 @@ class MemoryRow(TimestampedRow, Base):
     scope_id: Mapped[int | None] = mapped_column(IdType, index=True)
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="rule", server_default="rule")
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="accepted", server_default="accepted")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
 
 class MemoryEmbeddingRow(Base):
@@ -118,12 +119,23 @@ class MemoryRelationRow(Base):
 
 class MemoryVersionRow(Base):
     __tablename__ = "memory_versions"
+    __table_args__ = (UniqueConstraint("memory_id", "version", name="uq_memory_versions_memory_version"),)
 
     id: Mapped[int] = mapped_column(IdType, primary_key=True)
     memory_id: Mapped[int] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(300))
+    level: Mapped[str | None] = mapped_column(String(10))
+    memory_type: Mapped[str | None] = mapped_column(String(50))
+    scope: Mapped[str | None] = mapped_column(String(20))
+    scope_id: Mapped[int | None] = mapped_column(IdType)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str | None] = mapped_column(String(20))
+    deprecated: Mapped[bool | None] = mapped_column(Boolean)
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    source_change_set_id: Mapped[int | None] = mapped_column(IdType)
 
 
 class ApiKeyRow(Base):
