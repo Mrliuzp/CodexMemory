@@ -14,6 +14,7 @@ import { ElEmpty } from 'element-plus/es/components/empty/index'
 import { ElForm, ElFormItem } from 'element-plus/es/components/form/index'
 import { ElIcon } from 'element-plus/es/components/icon/index'
 import { ElInput } from 'element-plus/es/components/input/index'
+import { ElInputNumber } from 'element-plus/es/components/input-number/index'
 import { ElLoading } from 'element-plus/es/components/loading/index'
 import { ElMenu, ElMenuItem } from 'element-plus/es/components/menu/index'
 import { ElPagination } from 'element-plus/es/components/pagination/index'
@@ -21,6 +22,7 @@ import { ElProgress } from 'element-plus/es/components/progress/index'
 import { ElScrollbar } from 'element-plus/es/components/scrollbar/index'
 import { ElOption, ElSelect } from 'element-plus/es/components/select/index'
 import { ElStep, ElSteps } from 'element-plus/es/components/steps/index'
+import { ElSwitch } from 'element-plus/es/components/switch/index'
 import { ElTable, ElTableColumn } from 'element-plus/es/components/table/index'
 import { ElTabPane, ElTabs } from 'element-plus/es/components/tabs/index'
 import { ElTag } from 'element-plus/es/components/tag/index'
@@ -51,6 +53,7 @@ import 'element-plus/theme-chalk/el-form.css'
 import 'element-plus/theme-chalk/el-form-item.css'
 import 'element-plus/theme-chalk/el-icon.css'
 import 'element-plus/theme-chalk/el-input.css'
+import 'element-plus/theme-chalk/el-input-number.css'
 import 'element-plus/theme-chalk/el-loading.css'
 import 'element-plus/theme-chalk/el-menu.css'
 import 'element-plus/theme-chalk/el-menu-item.css'
@@ -64,6 +67,7 @@ import 'element-plus/theme-chalk/el-select.css'
 import 'element-plus/theme-chalk/el-select-dropdown.css'
 import 'element-plus/theme-chalk/el-step.css'
 import 'element-plus/theme-chalk/el-steps.css'
+import 'element-plus/theme-chalk/el-switch.css'
 import 'element-plus/theme-chalk/el-table.css'
 import 'element-plus/theme-chalk/el-table-column.css'
 import 'element-plus/theme-chalk/el-tab-pane.css'
@@ -82,9 +86,9 @@ import { pinia } from './stores'
 const components = [
   ElAlert, ElBreadcrumb, ElBreadcrumbItem, ElButton, ElCard, ElCollapse, ElCollapseItem,
   ElConfigProvider, ElDatePicker, ElDescriptions, ElDescriptionsItem, ElDialog, ElDrawer,
-  ElDropdown, ElDropdownItem, ElDropdownMenu, ElEmpty, ElForm, ElFormItem, ElIcon, ElInput,
+  ElDropdown, ElDropdownItem, ElDropdownMenu, ElEmpty, ElForm, ElFormItem, ElIcon, ElInput, ElInputNumber,
   ElMenu, ElMenuItem, ElOption, ElPagination, ElProgress, ElScrollbar, ElSelect,
-  ElStep, ElSteps, ElTabPane, ElTable,
+  ElStep, ElSteps, ElSwitch, ElTabPane, ElTable,
   ElTableColumn, ElTabs, ElTag, ElTimeline, ElTimelineItem, ElTooltip, ElUpload,
 ]
 
