@@ -10,10 +10,12 @@ Codex 记忆系统（`codex-memory-system`）是面向 Codex 和其他智能体�
 - V1.3.1 历史知识导入：异步批次、文件与问题生命周期、分片上传、对象存储、候选审核和回滚。
 - V1.4 可信任务执行报告：自动 TaskRun、Hook 工具事件、Git 基线、ChangeManifest、确定性报告和 L1 投影。
 - V1.5 接口契约：PHP 导出的 OpenAPI 文件、不可变 Revision、`operationId` 索引、人工发布、确定性 Markdown、管理页面和 MCP 提案工具。
+- V1.6 项目级 L1 记忆发布治理：候选决策状态机、默认关闭的 Codex CLI Runner 模型判断边界、CandidatePolicyService 服务端发布门禁、项目级阈值、人工纠错、Admin 观测和 Worker Codex 认证协调器。
+- V1.7 会话记忆窗口增量治理（开发中）：会话窗口收集与封口、Shadow ChangeSet 生成与服务端校验、approve/reject/apply 人工应用链路。
 
-版本路线与 V1.5 的唯一规格见 [CodexMemory 版本路线与 V1.5 OpenAPI Revision 蓝图](docs/CODEX_MEMORY_BLUEPRINT.md)。
+版本路线与 V1.5 的唯一规格见 [CodexMemory 版本路线与 V1.5 OpenAPI Revision 蓝图](docs/CODEX_MEMORY_BLUEPRINT.md)。当前发布状态以 [项目状态与下一步](docs/PROJECT_STATUS_AND_NEXT_STEPS.md) 为准。
 
-V1.5 已完成并通过验收：本次收尾回归后端 `42 passed`、前端 `11 passed` 与生产构建通过；隔离 PostgreSQL 的 `fresh→0023`、`0023→0022`、`0022→0023` 及真实 API 闭环均通过。
+V1.5 已完成并通过验收：本次收尾回归后端 `42 passed`、前端 `11 passed` 与生产构建通过；隔离 PostgreSQL 的 `fresh→0023`、`0023→0022`、`0022→0023` 及真实 API 闭环均通过。V1.6 已发布（提交 `5636b83`）：后端全量 `291 passed`，前端 28 个测试与生产构建通过，迁移链推进到 `0027_v16_decision_contracts`，并完成正式 Compose 部署验证。V1.7 在 `codex/v1.7-memory-consolidation` 分支开发中，新增迁移 `0028_v17_memory_windows`。
 
 ## 一、项目现在具有什么能力
 
@@ -77,6 +79,7 @@ V1.1 的写入链路用于解决“消息丢失、重复写入和异步任务失
 - Processing Job、Outbox、检索审计和安全/领域审计事件。
 - 系统状态、数据库迁移版本、待处理任务、Outbox 和死信数量。
 - 导入批次、文件、问题、进度、候选审核、取消、重试和回滚。
+- 系统状态页的“Codex CLI 登录状态”卡片（只显示登录/进行中/错误等有限状态）和项目治理表单（V1.6 决策策略、功能开关与置信度阈值）。
 
 ### 7. V1.5 接口契约交付与复盘
 
@@ -104,6 +107,25 @@ V1.5 采用 `backend_authoritative`：PHP 项目负责导出 OpenAPI，Codex Mem
 - 前端只传数字项目 ID、后端按 `project_key` 授权会产生 403；跨层字段语义必须由共享契约和端到端测试固定。
 - 自动归档的事件类型不能直接充当幂等键；普通消息应生成逐消息唯一 `event_key`，只有调用方能稳定重试时才显式复用同一个键。
 - Dockerfile 过早 `COPY .` 会让任意源码变化触发依赖重装；后续应按依赖清单与源码分层复制，缩短发布验证时间。
+
+### 8. V1.6 候选决策与发布治理
+
+V1.6 为候选记忆增加决策状态机、模型判断边界和人工纠错链路，相关能力默认全部关闭：
+
+- 决策链路固定为 `MemoryCandidate → candidate.decision.requested.v1 → decide_candidate → CodexCliDecisionAdapter → DecisionService → CandidatePolicyService → candidate.accepted.v1 → publish_memory`；模型建议不能直接写 `memories`。
+- 自动发布必须同时满足：候选为项目级 `L1/project`（L2、global、L3 不自动发布）、项目显式开启 `candidate_publish_enabled`、证据有效、非重复、无风险、非 abstain，且置信度达到阈值（默认 `0.80`，可按项目策略覆盖）。任何一项失败都不发布：`skip` 记录策略结果但不发布，低置信度、范围不允许或校验失败进入 `needs_review`。
+- `CodexCliRunner` 是 Worker 的模型判断边界：每次运行使用独立临时目录，固定 `--sandbox read-only`、`--ask-for-approval never` 等受限参数，输出必须通过严格 JSON Schema 校验；禁用、不可用、超时或输出无效都按可观测失败处理，不伪装成功。
+- `POST /api/admin/v1/candidates/{id}/correction` 支持 `discard`、`reject`、`supersede`、`replace` 人工纠错；每次操作要求审核人和理由，已发布内容只能 `supersede` 或 `replace`，L0 与正式 Memory 保持不可变。
+- 项目策略默认 `manual_review`；`memory_v11_enabled`、`candidate_publish_enabled`、`decision_engine_enabled` 默认关闭，需按项目人工开启并保留审计。
+
+### 9. V1.7 会话记忆窗口与增量变更集（开发中）
+
+V1.7 把一个会话的增量消息收敛为“窗口 + 人工变更集”，正在 `codex/v1.7-memory-consolidation` 分支开发：
+
+- 每个项目有独立的窗口策略（`enabled`、`manual_apply_enabled`、`max_messages`、`max_input_chars`），默认关闭，通过管理 API 配置。
+- 策略开启后，`message.appended.v1` 处理器把消息同步写入会话窗口；封口由 `memory.window.seal_requested.v1` 任务执行，并生成稳定的 `input_hash`。
+- `MemoryChangeSetService` 在窗口封口后以行锁生成 Shadow ChangeSet：构建受限上下文、调用 `CodexCliRunner` 产出严格 Schema 的变更建议，并经服务端再次校验后才落库。
+- 管理 API：`GET /api/admin/v1/projects/{project_key}/memory-windows`（列表、详情、封口）与 `memory-change-sets`（列表、详情）；`approve`/`reject` 把 shadow 变更集转入已批准或已拒绝（幂等，冲突返回 409），`apply` 由管理员触发，Memory 的新增、更新和版本校验全部由 `CandidatePolicyService` 执行。
 
 ## 二、这些能力解决了什么问题
 
@@ -267,6 +289,8 @@ $env:CODEX_MEMORY_OUTBOX_PATH='C:\codex-memory\outbox.jsonl'
 
 要求 Docker Desktop 或 Docker Engine + Compose。Compose 会启动 `postgres`、`api`、`mcp`、`worker` 和 `admin-web` 五个服务，其中 PostgreSQL 使用 `pgvector/pgvector:pg16`，数据库数据保存在 `pgdata` 命名卷。
 
+如需让 Worker 以 Codex CLI 执行模型判断，须在同一受控部署环境中额外加载 `docker-compose.codex-auth.yml` override：它在 Worker 镜像内安装官方 Codex CLI，并把仓库外的专用认证目录以只读方式挂载；管理员通过本机认证协调器在浏览器完成登录，API 只获得协调器地址和 token，不接触认证文件。Runner 默认关闭，启用前须单独完成安全评审，详见 [Worker Codex 认证协调器](docs/CODEX_AUTH_COORDINATOR.md)。
+
 1. 创建环境文件：
 
 ```powershell
@@ -352,6 +376,9 @@ git diff --check
 
 - [项目状态与下一步](docs/PROJECT_STATUS_AND_NEXT_STEPS.md)：当前实现、现行契约、默认端口和文档优先级。
 - [V1.3.1 历史导入交接](docs/HANDOFF_HISTORICAL_IMPORT.md)：导入能力、迁移、验收证据、风险和后续计划。
+- [V1.6 决策 Worker 集成](docs/v1.6/DECISION_WORKER_INTEGRATION.md)：决策状态机、自动发布门禁和人工纠错契约。
+- [Codex CLI 执行器契约](docs/CODEX_CLI_RUNNER.md)：Runner 调用接口、沙箱隔离边界和失败分类。
+- [Worker Codex 认证协调器](docs/CODEX_AUTH_COORDINATOR.md)：浏览器登录、认证目录只读挂载和 generation 切换顺序。
 - [V1.1 执行规格](docs/CODEX_MEMORY_V1_1_EXECUTABLE_SPEC.md)：API、Outbox、Worker、检索、Embedding Profile 和治理契约。
 - [V1.2 架构](docs/v1.2/architecture.md)：管理观测界面的边界和请求模型。
 - [V1.2 管理 API 概览](docs/v1.2/api-overview.md)：后台查询接口。
